@@ -1,0 +1,187 @@
+# =============================================================================
+# The Ledger — .gitignore
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env/
+.env.example
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.pyre/
+
+# -----------------------------------------------------------------------------
+# Poetry
+# -----------------------------------------------------------------------------
+# Keep poetry.lock committed — it pins exact dependency versions
+# DO NOT add poetry.lock here
+
+# -----------------------------------------------------------------------------
+# Testing & coverage
+# -----------------------------------------------------------------------------
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.cover
+*.py,cover
+nosetests.xml
+test-results/
+
+# -----------------------------------------------------------------------------
+# Environment variables — NEVER commit secrets
+# -----------------------------------------------------------------------------
+.env
+.env.local
+.env.production
+.env.staging
+# Keep .env.example and .env.test (they contain no secrets)
+
+# -----------------------------------------------------------------------------
+# Database
+# -----------------------------------------------------------------------------
+*.sqlite
+*.sqlite3
+*.db
+
+# -----------------------------------------------------------------------------
+# Logs
+# -----------------------------------------------------------------------------
+*.log
+logs/
+*.out
+
+# -----------------------------------------------------------------------------
+# IDE and editors
+# -----------------------------------------------------------------------------
+# VSCode
+.vscode/
+!.vscode/extensions.json
+
+# PyCharm / JetBrains
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Spyder
+.spyderproject.cfg
+.spyproject/
+
+# Rope
+.ropeproject/
+
+# -----------------------------------------------------------------------------
+# OS generated files
+# -----------------------------------------------------------------------------
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+
+# -----------------------------------------------------------------------------
+# Docker
+# -----------------------------------------------------------------------------
+# Don't ignore docker-compose files — they are part of the project
+# Ignore local overrides
+docker-compose.override.yml
+docker-compose.local.yml
+
+# -----------------------------------------------------------------------------
+# Node (if any tooling uses it)
+# -----------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# -----------------------------------------------------------------------------
+# Jupyter Notebooks (if used for analysis)
+# -----------------------------------------------------------------------------
+.ipynb_checkpoints/
+*.ipynb
+
+# -----------------------------------------------------------------------------
+# Temporary files
+# -----------------------------------------------------------------------------
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
+
+# -----------------------------------------------------------------------------
+# Project specific
+# -----------------------------------------------------------------------------
+# Local scripts not for version control
+scratch/
+local/
+playground/
+
+# Generated regulatory packages (can be large)
+regulatory_packages/
+*.regulatory_package.json
+
+# Benchmark output
+benchmark_results/
+*.benchmark.json
+
+# data
+data/
