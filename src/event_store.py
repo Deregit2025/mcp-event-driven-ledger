@@ -118,6 +118,22 @@ class EventStore:
                 await conn.execute(
                     "UPDATE event_streams SET current_version=$1 WHERE stream_id=$2",
                     expected_version + len(events), stream_id)
+
+                # 6. Write outbox entries — same transaction, guaranteed delivery
+                for i, event in enumerate(events):
+                    pos = expected_version + 1 + i
+                    await conn.execute(
+                        "INSERT INTO outbox "
+                        "(stream_id, stream_position, event_type, payload, created_at)"
+                        " VALUES ($1,$2,$3,$4::jsonb,$5)"
+                        " ON CONFLICT DO NOTHING",
+                        stream_id,
+                        pos,
+                        event["event_type"],
+                        json.dumps(event.get("payload", {})),
+                        datetime.utcnow(),
+                    )
+
                 return positions
                 
 

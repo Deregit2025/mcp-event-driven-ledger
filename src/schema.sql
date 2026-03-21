@@ -56,12 +56,22 @@ CREATE TABLE IF NOT EXISTS event_streams (
     current_version  INTEGER         NOT NULL DEFAULT -1,
     created_at       TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    archived_at      TIMESTAMPTZ     NULL,
 
     PRIMARY KEY (stream_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_event_streams_aggregate_type
     ON event_streams (aggregate_type);
+
+CREATE INDEX IF NOT EXISTS idx_event_streams_active
+    ON event_streams (aggregate_type, created_at DESC)
+    WHERE archived_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_event_streams_archived
+    ON event_streams (archived_at DESC)
+    WHERE archived_at IS NOT NULL;
+    
 
 -- ── OUTBOX ────────────────────────────────────────────────────────────────────
 -- Transactional outbox for guaranteed event delivery.

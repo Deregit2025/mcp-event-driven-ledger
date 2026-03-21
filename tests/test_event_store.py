@@ -84,3 +84,48 @@ async def test_load_all_yields_in_global_order(store):
     all_events = [e async for e in store.load_all(from_position=0)]
     positions = [e["global_position"] for e in all_events]
     assert positions == sorted(positions)
+
+
+@pytest.mark.asyncio
+async def test_postgres_concurrent_double_append_exactly_one_succeeds(store):
+    """
+    MANDATED: OCC test against real PostgreSQL — not InMemoryEventStore.
+    Proves SELECT FOR UPDATE serialises concurrent appends at DB level.
+    """
+    import asyncio
+
+    stream_id = "loan-APEX-PG-CONCURRENT-001"
+    await store.append(
+        stream_id,
+        [{"event_type": "ApplicationSubmitted", "event_version": 1,
+          "payload": {"application_id": "APEX-PG-001"}}],
+        expected_version=-1,
+    )
+
+    assert await store.stream_version(stream_id) == 0
+
+    results = []
+    errors = []
+
+    async def attempt(agent: str):
+        try:
+            await store.append(
+                stream_id,
+                [{"event_type": "CreditAnalysisCompleted",
+                  "event_version": 1,
+                  "payload": {"agent": agent}}],
+                expected_version=0,
+            )
+            results.append(f"{agent}:success")
+        except Exception as e:
+            errors.append(f"{agent}:{type(e).__name__}")
+
+    await asyncio.gather(attempt("agent-A"), attempt("agent-B"))
+
+    assert len(results) == 1, f"Expected 1 success, got {results}"
+    assert len(errors) == 1, f"Expected 1 OCC error, got {errors}"
+    assert await store.stream_version(stream_id) == 1
+
+    events = await store.load_stream(stream_id)
+    assert len(events) == 2
+    assert events[-1]["event_type"] == "CreditAnalysisCompleted"
