@@ -62,6 +62,7 @@ class EventStore:
         events: list[dict],
         expected_version: int,    # -1=new stream, 0+=expected current
         causation_id: str | None = None,
+        correlation_id: str | None = None,
         metadata: dict | None = None,
     ) -> list[int]:
         """
@@ -94,7 +95,12 @@ class EventStore:
                 # 4. Insert each event
                 positions = []
                 meta = {**(metadata or {})}
-                if causation_id: meta["causation_id"] = causation_id
+                if causation_id: 
+                    meta["causation_id"] = causation_id
+                if correlation_id: 
+                    meta["correlation_id"] = correlation_id
+                
+                
                 for i, event in enumerate(events):
                     pos = expected_version + 1 + i
                     await conn.execute(
@@ -207,6 +213,30 @@ class EventStore:
                 "WHERE stream_id = $1",
                 stream_id,
             )
+    async def get_stream_metadata(self, stream_id: str) -> dict | None:
+        """
+        Returns metadata about a stream without loading any events.
+        Used for causation chain lookups and stream health checks.
+        Returns None if stream does not exist.
+        """
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT stream_id, aggregate_type, current_version, "
+                "       created_at, updated_at, archived_at "
+                "FROM event_streams WHERE stream_id = $1",
+                stream_id,
+            )
+            if not row:
+                return None
+                return {
+            "stream_id": row["stream_id"],
+            "aggregate_type": row["aggregate_type"],
+            "current_version": row["current_version"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "archived_at": row["archived_at"],
+            "is_archived": row["archived_at"] is not None,
+        }
 # ─────────────────────────────────────────────────────────────────────────────
 # UPCASTER REGISTRY — Phase 4
 # ─────────────────────────────────────────────────────────────────────────────
@@ -292,6 +322,7 @@ class InMemoryEventStore:
         events: list[dict],
         expected_version: int,
         causation_id: str | None = None,
+        correlation_id: str | None = None,
         metadata: dict | None = None,
     ) -> list[int]:
         async with self._locks[stream_id]:
@@ -306,6 +337,10 @@ class InMemoryEventStore:
             meta = dict(metadata or {})
             if causation_id:
                 meta["causation_id"] = causation_id
+            if correlation_id:
+                meta["correlation_id"] = correlation_id
+            
+            
             for i, event in enumerate(events):
                 pos = current + 1 + i
                 stored = {
@@ -360,6 +395,18 @@ class InMemoryEventStore:
         if stream_id not in self._versions:
             raise ValueError(f"Stream '{stream_id}' does not exist")
         self._archived.add(stream_id)
+    async def get_stream_metadata(self, stream_id: str) -> dict | None:
+        if stream_id not in self._versions:
+            return None
+        return {
+            "stream_id": stream_id,
+            "aggregate_type": stream_id.split("-")[0],
+            "current_version": self._versions[stream_id],
+            "created_at": None,
+            "updated_at": None,
+            "archived_at": None,
+            "is_archived": stream_id in self._archived,
+        }
 
     async def save_checkpoint(self, projection_name: str, position: int) -> None:
         self._checkpoints[projection_name] = position

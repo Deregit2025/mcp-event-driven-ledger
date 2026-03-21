@@ -57,6 +57,7 @@ async def handle_submit_application(
     contact_email: str = "",
     contact_name: str = "",
     application_reference: str = "",
+    correlation_id: str | None = None,
 ) -> str:
     """
     Submit a new loan application.
@@ -87,6 +88,7 @@ async def handle_submit_application(
         stream_id=f"loan-{application_id}",
         events=[event],
         expected_version=-1,
+        correlation_id=correlation_id or application_id,
     )
     return f"loan-{application_id}"
 
@@ -315,6 +317,7 @@ async def handle_generate_decision(
     conditions: list[str] | None = None,
     contributing_sessions: list[str] | None = None,
     model_versions: dict | None = None,
+    correlation_id: str | None = None,
 ) -> None:
     """
     Generate the final orchestrator decision.
@@ -348,6 +351,7 @@ async def handle_generate_decision(
         events=[event],
         expected_version=app.version,
         causation_id=orchestrator_session_id,
+        correlation_id=correlation_id or application_id,
     )
 
 
@@ -366,6 +370,8 @@ async def handle_human_review_completed(
     term_months: int = 60,
     conditions: list[str] | None = None,
     decline_reasons: list[str] | None = None,
+    correlation_id: str | None = None,
+    causation_id: str | None = None,
 ) -> None:
     """
     Record a human loan officer's review decision.
@@ -421,4 +427,6 @@ async def handle_human_review_completed(
         stream_id=f"loan-{application_id}",
         events=events,
         expected_version=app.version,
+        causation_id=causation_id,
+        correlation_id=correlation_id or application_id,    
     )

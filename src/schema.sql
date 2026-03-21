@@ -75,15 +75,25 @@ CREATE TABLE IF NOT EXISTS outbox (
     event_type       TEXT            NOT NULL,
     payload          JSONB           NOT NULL DEFAULT '{}',
     created_at       TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    processed_at     TIMESTAMPTZ     NULL,       -- NULL = not yet delivered
-    error            TEXT            NULL,       -- last delivery error if any
+    processed_at     TIMESTAMPTZ     NULL,
+    published_at     TIMESTAMPTZ     NULL,
+    delivery_attempts INTEGER        NOT NULL DEFAULT 0,
+    last_error       TEXT            NULL,
 
-    UNIQUE (stream_id, stream_position)
+    UNIQUE (stream_id, stream_position),
+    CONSTRAINT fk_outbox_events
+        FOREIGN KEY (stream_id, stream_position)
+        REFERENCES events (stream_id, stream_position)
+        ON DELETE RESTRICT
 );
 
 CREATE INDEX IF NOT EXISTS idx_outbox_unprocessed
     ON outbox (created_at ASC)
     WHERE processed_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_outbox_unpublished
+    ON outbox (created_at ASC)
+    WHERE published_at IS NULL AND processed_at IS NOT NULL;
 
 -- ── PROJECTION CHECKPOINTS ────────────────────────────────────────────────────
 -- One row per projection. Stores the last global_position processed.
