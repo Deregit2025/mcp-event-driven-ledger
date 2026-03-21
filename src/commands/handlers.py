@@ -220,6 +220,7 @@ async def handle_credit_analysis_completed(
         stream_id=f"credit-{application_id}",
         events=[event],
         expected_version=credit_ver,
+        causation_id=session_id,
     )
 
 
@@ -260,6 +261,7 @@ async def handle_fraud_screening_completed(
         stream_id=f"fraud-{application_id}",
         events=[event],
         expected_version=fraud_ver,
+        causation_id=session_id,
     )
 
 
@@ -345,6 +347,7 @@ async def handle_generate_decision(
         stream_id=f"loan-{application_id}",
         events=[event],
         expected_version=app.version,
+        causation_id=orchestrator_session_id,
     )
 
 

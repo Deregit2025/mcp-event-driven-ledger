@@ -78,7 +78,12 @@ class EventStore:
                 current = row["current_version"] if row else -1
                 if current != expected_version:
                     raise OptimisticConcurrencyError(stream_id, expected_version, current)
+                current = row["current_version"] if row else -1
 
+                if row and row.get("archived_at") is not None:
+                    raise ValueError(
+                        f"Stream '{stream_id}' is archived and read-only."
+                    )
                 # 3. Create stream if new
                 if row is None:
                     await conn.execute(
@@ -108,6 +113,7 @@ class EventStore:
                     "UPDATE event_streams SET current_version=$1 WHERE stream_id=$2",
                     expected_version + len(events), stream_id)
                 return positions
+                
 
     async def load_stream(
         self,
@@ -182,6 +188,25 @@ class EventStore:
             return {**dict(row), "payload": p_dict, "metadata": m_dict}
 
 
+    async def archive_stream(self, stream_id: str) -> None:
+        """Mark a stream as read-only. No further appends allowed. 
+        Used when a loan application reaches a terminal state.
+        """
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT stream_id, archived_at FROM event_streams "
+                "WHERE stream_id = $1",
+                stream_id,
+            )
+            if not row:
+                raise ValueError(f"Stream '{stream_id}' does not exist")
+            if row["archived_at"] is not None:
+                return  # already archived — idempotent
+            await conn.execute(
+                "UPDATE event_streams SET archived_at = NOW() "
+                "WHERE stream_id = $1",
+                stream_id,
+            )
 # ─────────────────────────────────────────────────────────────────────────────
 # UPCASTER REGISTRY — Phase 4
 # ─────────────────────────────────────────────────────────────────────────────
@@ -230,116 +255,33 @@ class UpcasterRegistry:
         return event
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# IN-MEMORY EVENT STORE — for tests only
-# ─────────────────────────────────────────────────────────────────────────────
-
-class InMemoryEventStore:
-    """
-    In-memory event store for unit tests. No database required.
-    Identical interface to EventStore — swap transparently in conftest.py.
-
-    Your Phase 1 tests use this. Once EventStore is implemented and a test
-    database is available, you can run all tests against the real store too.
-    """
-
-    def __init__(self, upcaster_registry=None):
-        self.upcasters = upcaster_registry
-        self._streams: dict[str, list[dict]] = {}   # stream_id → [event_dict, ...]
-        self._global: list[dict] = []               # all events in global order
-
-    async def stream_version(self, stream_id: str) -> int:
-        events = self._streams.get(stream_id, [])
-        return len(events) - 1  # -1 if empty, 0-based index otherwise
-
-    async def append(
-        self,
-        stream_id: str,
-        events: list[dict],
-        expected_version: int,
-        causation_id: str | None = None,
-        metadata: dict | None = None,
-    ) -> list[int]:
-        current = await self.stream_version(stream_id)
-        if current != expected_version:
-            raise OptimisticConcurrencyError(stream_id, expected_version, current)
-
-        self._streams.setdefault(stream_id, [])
-        positions = []
-        for i, event in enumerate(events):
-            pos = expected_version + 1 + i
-            stored = {
-                "event_id": str(__import__("uuid").uuid4()),
-                "stream_id": stream_id,
-                "stream_position": pos,
-                "global_position": len(self._global),
-                "event_type": event["event_type"],
-                "event_version": event.get("event_version", 1),
-                "payload": dict(event.get("payload", {})),
-                "metadata": {**(metadata or {}), **({"causation_id": causation_id} if causation_id else {})},
-                "recorded_at": __import__("datetime").datetime.utcnow(),
-            }
-            self._streams[stream_id].append(stored)
-            self._global.append(stored)
-            positions.append(pos)
-        return positions
-
-    async def load_stream(
-        self,
-        stream_id: str,
-        from_position: int = 0,
-        to_position: int | None = None,
-    ) -> list[dict]:
-        events = self._streams.get(stream_id, [])
-        result = [e for e in events if e["stream_position"] >= from_position]
-        if to_position is not None:
-            result = [e for e in result if e["stream_position"] <= to_position]
-        if self.upcasters:
-            result = [self.upcasters.upcast(dict(e)) for e in result]
-        return result
-
-    async def load_all(
-        self, from_position: int = 0, batch_size: int = 500
-    ):
-        for event in self._global:
-            if event["global_position"] >= from_position:
-                yield dict(event)
-
-    async def get_event(self, event_id) -> dict | None:
-        for event in self._global:
-            if event["event_id"] == str(event_id):
-                return dict(event)
-        return None
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # IN-MEMORY EVENT STORE — for Phase 1 tests only
 # Identical interface to EventStore. Drop-in for tests; never use in production.
 # ─────────────────────────────────────────────────────────────────────────────
 
-import asyncio as _asyncio
-from collections import defaultdict as _defaultdict
-from datetime import datetime as _datetime
-from uuid import uuid4 as _uuid4
+import asyncio
+from collections import defaultdict
+from datetime import datetime, timezone
+from uuid import uuid4
+
 
 class InMemoryEventStore:
     """
     Thread-safe (asyncio-safe) in-memory event store.
-    Used exclusively in Phase 1 tests and conftest fixtures.
-    Same interface as EventStore — swap one for the other with no code changes.
+    Used exclusively in tests. Same interface as EventStore.
+    No database required — swap one for the other with no code changes.
     """
 
-    def __init__(self):
-        # stream_id -> list of event dicts
-        self._streams: dict[str, list[dict]] = _defaultdict(list)
-        # stream_id -> current version (position of last event, -1 if empty)
+    def __init__(self, upcaster_registry=None):
+        self.upcasters = upcaster_registry
+        self._streams: dict[str, list[dict]] = defaultdict(list)
         self._versions: dict[str, int] = {}
-        # global append log (ordered by insertion)
         self._global: list[dict] = []
-        # projection checkpoints
         self._checkpoints: dict[str, int] = {}
-        # asyncio lock per stream for OCC
-        self._locks: dict[str, _asyncio.Lock] = _defaultdict(_asyncio.Lock)
+        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._archived: set = set()
 
     async def stream_version(self, stream_id: str) -> int:
         return self._versions.get(stream_id, -1)
@@ -356,16 +298,18 @@ class InMemoryEventStore:
             current = self._versions.get(stream_id, -1)
             if current != expected_version:
                 raise OptimisticConcurrencyError(stream_id, expected_version, current)
-
+            if stream_id in self._archived:
+                raise ValueError(
+                    f"Stream '{stream_id}' is archived and read-only."
+                )
             positions = []
-            meta = {**(metadata or {})}
+            meta = dict(metadata or {})
             if causation_id:
                 meta["causation_id"] = causation_id
-
             for i, event in enumerate(events):
                 pos = current + 1 + i
                 stored = {
-                    "event_id": str(_uuid4()),
+                    "event_id": str(uuid4()),
                     "stream_id": stream_id,
                     "stream_position": pos,
                     "global_position": len(self._global),
@@ -373,12 +317,11 @@ class InMemoryEventStore:
                     "event_version": event.get("event_version", 1),
                     "payload": dict(event.get("payload", {})),
                     "metadata": meta,
-                    "recorded_at": _datetime.utcnow().isoformat(),
+                    "recorded_at": datetime.now(timezone.utc).isoformat(),
                 }
                 self._streams[stream_id].append(stored)
                 self._global.append(stored)
                 positions.append(pos)
-
             self._versions[stream_id] = current + len(events)
             return positions
 
@@ -393,18 +336,30 @@ class InMemoryEventStore:
             if e["stream_position"] >= from_position
             and (to_position is None or e["stream_position"] <= to_position)
         ]
-        return sorted(events, key=lambda e: e["stream_position"])
+        result = sorted(events, key=lambda e: e["stream_position"])
+        if self.upcasters:
+            result = [self.upcasters.upcast(dict(e)) for e in result]
+        return result
 
-    async def load_all(self, from_position: int = 0, batch_size: int = 500):
+    async def load_all(
+        self,
+        from_position: int = 0,
+        batch_size: int = 500,
+    ):
         for e in self._global:
             if e["global_position"] >= from_position:
-                yield e
+                yield dict(e)
 
     async def get_event(self, event_id: str) -> dict | None:
         for e in self._global:
-            if e["event_id"] == event_id:
-                return e
+            if e["event_id"] == str(event_id):
+                return dict(e)
         return None
+
+    async def archive_stream(self, stream_id: str) -> None:
+        if stream_id not in self._versions:
+            raise ValueError(f"Stream '{stream_id}' does not exist")
+        self._archived.add(stream_id)
 
     async def save_checkpoint(self, projection_name: str, position: int) -> None:
         self._checkpoints[projection_name] = position

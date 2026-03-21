@@ -133,6 +133,18 @@ class AgentSessionAggregate:
                 f"Session {self.session_id} is already completed. "
                 "Cannot append more events to a completed session."
             )
+    def assert_model_version_consistent(self, model_version: str) -> None:
+        """
+        Rule: once a session starts with a model version,
+        all subsequent nodes must use the same version.
+        Prevents silent model switching mid-session.
+        """
+        if self.model_version and self.model_version != model_version:
+            raise ValueError(
+                f"Model version mismatch: session started with "
+                f"'{self.model_version}' but attempted to use '{model_version}'. "
+                f"Human override required before reanalysis with a different model."
+            )
 
     def node_already_executed(self, node_name: str) -> bool:
         """Used during crash recovery to skip already-completed nodes."""

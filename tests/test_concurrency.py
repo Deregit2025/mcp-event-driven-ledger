@@ -160,3 +160,82 @@ async def test_occ_error_contains_correct_versions():
     assert err.stream_id == "loan-APEX-ERR"
     assert err.expected == 0
     assert err.actual == 1
+
+@pytest.mark.asyncio
+async def test_fifty_concurrent_writers_no_data_corruption():
+    """
+    50 concurrent writers each append to their own stream simultaneously.
+    All must succeed. No data corruption. No missing events.
+    """
+    from src.event_store import InMemoryEventStore
+    store = InMemoryEventStore()
+
+    async def write_application(i: int):
+        stream_id = f"loan-APEX-LOAD-{i:03d}"
+        await store.append(
+            stream_id,
+            [_ev("ApplicationSubmitted", application_id=f"APEX-{i:03d}")],
+            expected_version=-1,
+        )
+        await store.append(
+            stream_id,
+            [_ev("CreditAnalysisCompleted", risk_tier="MEDIUM")],
+            expected_version=0,
+        )
+        await store.append(
+            stream_id,
+            [_ev("DecisionGenerated", recommendation="APPROVE")],
+            expected_version=1,
+        )
+        return stream_id
+
+    # Fire 50 concurrent writers
+    results = await asyncio.gather(*[write_application(i) for i in range(50)])
+
+    # All 50 must have succeeded
+    assert len(results) == 50
+
+    # Each stream must have exactly 3 events
+    for i in range(50):
+        stream_id = f"loan-APEX-LOAD-{i:03d}"
+        events = await store.load_stream(stream_id)
+        assert len(events) == 3, f"Stream {stream_id} has {len(events)} events, expected 3"
+        assert await store.stream_version(stream_id) == 2
+
+    # Total global events must be exactly 150
+    all_events = [e async for e in store.load_all()]
+    assert len(all_events) == 150, f"Expected 150 total events, got {len(all_events)}"
+
+
+@pytest.mark.asyncio
+async def test_cannot_append_to_archived_stream():
+    """Archived streams must reject all further appends."""
+    from src.event_store import InMemoryEventStore
+    store = InMemoryEventStore()
+
+    await store.append("loan-ARCH-001", [_ev("ApplicationSubmitted")], expected_version=-1)
+    await store.archive_stream("loan-ARCH-001")
+
+    with pytest.raises(ValueError, match="archived"):
+        await store.append("loan-ARCH-001", [_ev("CreditAnalysisCompleted")], expected_version=0)
+
+
+@pytest.mark.asyncio
+async def test_archive_nonexistent_stream_raises():
+    """Archiving a stream that does not exist must raise."""
+    from src.event_store import InMemoryEventStore
+    store = InMemoryEventStore()
+
+    with pytest.raises(ValueError):
+        await store.archive_stream("loan-DOES-NOT-EXIST")
+
+
+@pytest.mark.asyncio
+async def test_archive_is_idempotent():
+    """Archiving an already-archived stream must not raise."""
+    from src.event_store import InMemoryEventStore
+    store = InMemoryEventStore()
+
+    await store.append("loan-ARCH-002", [_ev("ApplicationSubmitted")], expected_version=-1)
+    await store.archive_stream("loan-ARCH-002")
+    await store.archive_stream("loan-ARCH-002")  # second call must not raise
