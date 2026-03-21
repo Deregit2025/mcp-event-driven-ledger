@@ -4,7 +4,8 @@ src/aggregates/loan_application.py
 LoanApplicationAggregate — full implementation.
 
 apply() dispatches to per-event handler methods (_apply_*).
-Business rule assertions are separate methods called by command handlers.
+Invalid transitions raise DomainError subclasses — not generic exceptions.
+stream_version property exposes the precise version for handlers to use.
 
 BUSINESS RULES ENFORCED:
   1. State machine — only valid transitions allowed
@@ -88,12 +89,8 @@ TERMINAL_STATES = {
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
 def _to_snake(event_type: str) -> str:
-    """
-    Convert CamelCase event type to snake_case handler name.
-    e.g. "ApplicationSubmitted" -> "application_submitted"
-    """
-    s = re.sub(r'(?<!^)(?=[A-Z])', '_', event_type).lower()
-    return s
+    """CamelCase → snake_case. e.g. ApplicationSubmitted → application_submitted"""
+    return re.sub(r'(?<!^)(?=[A-Z])', '_', event_type).lower()
 
 
 # ── AGGREGATE ─────────────────────────────────────────────────────────────────
@@ -135,13 +132,12 @@ class LoanApplicationAggregate:
 
     def apply(self, event: dict) -> None:
         """
-        Dispatch to the correct per-event handler method.
-        Unknown event types are silently ignored — forward compatibility.
+        Dispatch to per-event handler method.
+        Unknown event types silently ignored — forward compatibility.
         """
         et = event.get("event_type", "")
         self.version += 1
-        handler_name = f"_apply_{_to_snake(et)}"
-        handler = getattr(self, handler_name, None)
+        handler = getattr(self, f"_apply_{_to_snake(et)}", None)
         if handler:
             handler(event.get("payload", {}))
 
@@ -167,7 +163,7 @@ class LoanApplicationAggregate:
             self.documents_uploaded.append(doc_id)
 
     def _apply_document_upload_failed(self, p: dict) -> None:
-        pass  # stays in DOCUMENTS_PENDING
+        pass
 
     def _apply_package_ready_for_analysis(self, p: dict) -> None:
         self.document_package_ready = True
@@ -219,15 +215,14 @@ class LoanApplicationAggregate:
 
     def _apply_decision_generated(self, p: dict) -> None:
         self.contributing_agent_sessions = p.get("contributing_sessions", [])
-        rec = p.get("recommendation", "")
-        if rec == "REFER":
+        if p.get("recommendation") == "REFER":
             self.state = ApplicationState.PENDING_HUMAN_REVIEW
 
     def _apply_human_review_requested(self, p: dict) -> None:
         self.state = ApplicationState.PENDING_HUMAN_REVIEW
 
     def _apply_human_review_completed(self, p: dict) -> None:
-        pass  # final state set by ApplicationApproved/Declined
+        pass
 
     def _apply_human_review_override(self, p: dict) -> None:
         self.analysis_overridden = True
@@ -248,19 +243,26 @@ class LoanApplicationAggregate:
     # ── BUSINESS RULE ASSERTIONS ──────────────────────────────────────────────
 
     def assert_valid_transition(self, target: ApplicationState) -> None:
-        """Rule 1: only valid state transitions allowed."""
+        """Rule 1: raises InvalidStateTransitionError for invalid transitions."""
+        from src.models.events import InvalidStateTransitionError
         allowed = VALID_TRANSITIONS.get(self.state, [])
         if target not in allowed:
-            raise ValueError(
-                f"Invalid transition {self.state} → {target}. "
-                f"Allowed: {[s.value for s in allowed]}"
+            raise InvalidStateTransitionError(
+                application_id=self.application_id,
+                current_state=self.state.value,
+                target_state=target.value,
+                allowed_states=[s.value for s in allowed],
             )
 
     def assert_not_terminal(self) -> None:
+        """Raises InvalidStateTransitionError if in a terminal state."""
+        from src.models.events import InvalidStateTransitionError
         if self.state in TERMINAL_STATES:
-            raise ValueError(
-                f"Application {self.application_id} is in terminal state "
-                f"{self.state}. No further transitions allowed."
+            raise InvalidStateTransitionError(
+                application_id=self.application_id,
+                current_state=self.state.value,
+                target_state="any",
+                allowed_states=[],
             )
 
     def assert_documents_processed(self) -> None:
@@ -272,29 +274,36 @@ class LoanApplicationAggregate:
             )
 
     def assert_no_prior_credit_analysis(self) -> None:
-        """Rule 3: model version locking."""
+        """Rule 3: raises ModelVersionLockedError if already analysed."""
+        from src.models.events import ModelVersionLockedError
         if self.has_credit_analysis and not self.analysis_overridden:
-            raise ValueError(
-                f"Application {self.application_id} already has a credit analysis. "
-                "A HumanReviewOverride is required before reanalysis."
+            raise ModelVersionLockedError(
+                application_id=self.application_id,
             )
 
     def assert_analyses_complete(self) -> None:
-        """Rules 3/5: all analyses must complete before decision."""
+        """Rules 3/5: raises domain errors if analyses are incomplete."""
+        from src.models.events import (
+            InvalidStateTransitionError,
+            ComplianceDependencyError,
+        )
         if self.credit_confidence is None:
-            raise ValueError(
-                "Credit analysis has not completed. "
-                "CreditAnalysisCompleted is required before DecisionGenerated."
+            raise InvalidStateTransitionError(
+                application_id=self.application_id,
+                current_state=self.state.value,
+                target_state="PENDING_DECISION",
+                allowed_states=[],
             )
         if self.fraud_score is None:
-            raise ValueError(
-                "Fraud screening has not completed. "
-                "FraudScreeningCompleted is required before DecisionGenerated."
+            raise InvalidStateTransitionError(
+                application_id=self.application_id,
+                current_state=self.state.value,
+                target_state="PENDING_DECISION",
+                allowed_states=[],
             )
         if self.compliance_verdict is None:
-            raise ValueError(
-                "Compliance check has not completed. "
-                "ComplianceCheckCompleted is required before DecisionGenerated."
+            raise ComplianceDependencyError(
+                application_id=self.application_id,
             )
 
     def assert_valid_orchestrator_decision(
@@ -319,17 +328,26 @@ class LoanApplicationAggregate:
         contributing_sessions: list[str],
     ) -> None:
         """Rule 6: causal chain enforcement."""
+        from src.models.events import CausalChainError
         invalid = [
             s for s in contributing_sessions
             if s not in self.valid_session_ids
         ]
         if invalid:
-            raise ValueError(
-                f"Invalid contributing sessions: {invalid}. "
-                "These sessions did not process this application."
+            raise CausalChainError(
+                application_id=self.application_id,
+                invalid_sessions=invalid,
             )
 
     # ── PROPERTIES ────────────────────────────────────────────────────────────
+
+    @property
+    def stream_version(self) -> int:
+        """
+        Precise stream version for use as expected_version in store.append().
+        Handlers must use this value — never call store.stream_version() separately.
+        """
+        return self.version
 
     @property
     def is_terminal(self) -> bool:

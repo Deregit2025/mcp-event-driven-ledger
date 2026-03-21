@@ -6,11 +6,7 @@ AgentSessionAggregate — Gas Town pattern implementation.
 Replays the agent session stream to reconstruct what the agent
 has done and whether it needs reconciliation after a crash.
 
-KEY INVARIANTS:
-  - AgentSessionStarted must be the first event (Gas Town anchor)
-  - Every LangGraph node produces one AgentNodeExecuted event
-  - On crash: AgentSessionFailed with recoverable=True
-  - On recovery: AgentSessionRecovered references the crashed session
+stream_version property exposes precise version for handlers.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -52,6 +48,8 @@ class AgentSessionAggregate:
     context_loaded: bool = False
     version: int = -1
 
+    # ── LOAD ──────────────────────────────────────────────────────────────────
+
     @classmethod
     async def load(
         cls,
@@ -66,6 +64,8 @@ class AgentSessionAggregate:
         for event in events:
             agg.apply(event)
         return agg
+
+    # ── DISPATCHER ────────────────────────────────────────────────────────────
 
     def apply(self, event: dict) -> None:
         """Apply one event — pure function, no IO."""
@@ -106,49 +106,64 @@ class AgentSessionAggregate:
             self.error_message = p.get("error_message")
             self.recoverable = p.get("recoverable", False)
             self.last_successful_node = p.get("last_successful_node")
-            if self.recoverable:
-                self.status = SessionStatus.NEEDS_RECONCILIATION
-            else:
-                self.status = SessionStatus.FAILED
+            self.status = (
+                SessionStatus.NEEDS_RECONCILIATION
+                if self.recoverable
+                else SessionStatus.FAILED
+            )
 
         elif et == "AgentSessionRecovered":
             self.recovered_from_session_id = p.get("recovered_from_session_id")
             self.recovery_point = p.get("recovery_point")
             self.status = SessionStatus.RECOVERED
-            self.context_source = f"prior_session_replay:{self.recovered_from_session_id}"
+            self.context_source = (
+                f"prior_session_replay:{self.recovered_from_session_id}"
+            )
 
     # ── ASSERTIONS ────────────────────────────────────────────────────────────
 
     def assert_context_loaded(self) -> None:
         """Gas Town rule: AgentSessionStarted must exist before any work."""
+        from src.models.events import AgentContextNotLoadedError
         if not self.context_loaded:
-            raise ValueError(
-                f"Session {self.session_id} has no AgentSessionStarted event. "
-                "Call start_session() before any node execution."
+            raise AgentContextNotLoadedError(
+                session_id=self.session_id,
+                agent_type=self.agent_type or "unknown",
             )
 
     def assert_not_completed(self) -> None:
+        """Session must be active — cannot append to a completed session."""
         if self.status == SessionStatus.COMPLETED:
             raise ValueError(
                 f"Session {self.session_id} is already completed. "
                 "Cannot append more events to a completed session."
             )
+
     def assert_model_version_consistent(self, model_version: str) -> None:
         """
-        Rule: once a session starts with a model version,
+        Rule 3: once a session starts with a model version,
         all subsequent nodes must use the same version.
-        Prevents silent model switching mid-session.
         """
         if self.model_version and self.model_version != model_version:
             raise ValueError(
                 f"Model version mismatch: session started with "
                 f"'{self.model_version}' but attempted to use '{model_version}'. "
-                f"Human override required before reanalysis with a different model."
+                "Human override required before reanalysis with a different model."
             )
 
     def node_already_executed(self, node_name: str) -> bool:
         """Used during crash recovery to skip already-completed nodes."""
         return node_name in self.nodes_executed
+
+    # ── PROPERTIES ────────────────────────────────────────────────────────────
+
+    @property
+    def stream_version(self) -> int:
+        """
+        Precise stream version for use as expected_version in store.append().
+        Handlers must use this value — never call store.stream_version() separately.
+        """
+        return self.version
 
     @property
     def is_crashed(self) -> bool:

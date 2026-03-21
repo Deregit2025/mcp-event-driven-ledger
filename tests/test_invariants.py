@@ -111,7 +111,8 @@ async def test_cannot_decide_without_credit_analysis():
     app.fraud_score = 0.1
     app.compliance_verdict = "CLEAR"
 
-    with pytest.raises(ValueError, match="Credit analysis"):
+    from src.models.events import InvalidStateTransitionError
+    with pytest.raises(InvalidStateTransitionError):
         app.assert_analyses_complete()
 
 
@@ -126,7 +127,8 @@ async def test_cannot_decide_without_fraud_screening():
     app.credit_confidence = 0.85
     app.compliance_verdict = "CLEAR"
 
-    with pytest.raises(ValueError, match="Fraud"):
+    from src.models.events import InvalidStateTransitionError
+    with pytest.raises(InvalidStateTransitionError):
         app.assert_analyses_complete()
 
 
@@ -172,8 +174,12 @@ async def test_override_without_reason_rejected():
 async def test_agent_context_not_loaded_raises():
     """Agent cannot do work without AgentSessionStarted event."""
     agg = AgentSessionAggregate(session_id="sess-test-001")
-    with pytest.raises(ValueError, match="AgentSessionStarted"):
+    
+    from src.models.events import AgentContextNotLoadedError
+    with pytest.raises(AgentContextNotLoadedError):
         agg.assert_context_loaded()
+
+
 
 
 # ── MODEL VERSION LOCKING ─────────────────────────────────────────────────────
