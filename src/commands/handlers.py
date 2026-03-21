@@ -4,13 +4,13 @@ src/commands/handlers.py
 Command handlers — load → validate → determine → append pattern.
 
 Each handler:
-  1. Loads the aggregate from the event store
+  1. Loads aggregates from the event store
   2. Validates business rules against current state
   3. Determines which events to append
   4. Appends them atomically via the event store
 
-Handlers never talk directly to agents or projections.
-They are the write side of CQRS.
+correlation_id and causation_id are passed through to every append.
+Handlers never contain business logic — that lives in the aggregates.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -64,7 +64,6 @@ async def handle_submit_application(
     Creates the loan-{application_id} stream.
     Returns stream_id.
     """
-    # Check stream does not already exist
     ver = await store.stream_version(f"loan-{application_id}")
     if ver != -1:
         raise ValueError(
@@ -105,6 +104,7 @@ async def handle_start_agent_session(
     context_source: str = "fresh",
     context_token_count: int = 0,
     langgraph_graph_version: str = "1.0.0",
+    correlation_id: str | None = None,
 ) -> str:
     """
     Start an agent session — Gas Town anchor.
@@ -134,39 +134,9 @@ async def handle_start_agent_session(
         stream_id=stream_id,
         events=[event],
         expected_version=-1,
+        correlation_id=correlation_id or application_id,
     )
     return stream_id
-
-
-# ── REQUEST DOCUMENT UPLOAD ───────────────────────────────────────────────────
-
-async def handle_request_document_upload(
-    store,
-    application_id: str,
-    required_document_types: list[str] | None = None,
-    requested_by: str = "system",
-) -> None:
-    """Request documents from the applicant after submission."""
-    app = await LoanApplicationAggregate.load(store, application_id)
-    app.assert_valid_transition(ApplicationState.DOCUMENTS_PENDING)
-
-    doc_types = [DocumentType(d) for d in (required_document_types or [
-        "income_statement", "balance_sheet", "application_proposal"
-    ])]
-
-    from schema.events import DocumentUploadRequested
-    event = DocumentUploadRequested(
-        application_id=application_id,
-        required_document_types=doc_types,
-        deadline=_now(),
-        requested_by=requested_by,
-    ).to_store_dict()
-
-    await store.append(
-        stream_id=f"loan-{application_id}",
-        events=[event],
-        expected_version=app.version,
-    )
 
 
 # ── CREDIT ANALYSIS COMPLETED ─────────────────────────────────────────────────
@@ -175,6 +145,7 @@ async def handle_credit_analysis_completed(
     store,
     application_id: str,
     session_id: str,
+    agent_type: str,
     risk_tier: str,
     recommended_limit_usd: float,
     confidence: float,
@@ -183,14 +154,29 @@ async def handle_credit_analysis_completed(
     key_concerns: list[str] | None = None,
     data_quality_caveats: list[str] | None = None,
     policy_overrides: list[str] | None = None,
+    correlation_id: str | None = None,
 ) -> None:
     """
     Record that a CreditAnalysisAgent has completed its analysis.
-    Validates confidence floor — confidence < 0.60 forces REFER later.
+
+    Guards enforced by aggregates:
+    - LoanApplicationAggregate: no prior credit analysis unless overridden
+    - AgentSessionAggregate: session must be active, model version consistent
     """
     from schema.events import CreditAnalysisCompleted, CreditDecision, RiskTier
-    app = await LoanApplicationAggregate.load(store, application_id)
+    import hashlib, json
 
+    # LOAD — both aggregates
+    app = await LoanApplicationAggregate.load(store, application_id)
+    session = await AgentSessionAggregate.load(store, agent_type, session_id)
+
+    # VALIDATE — aggregate guards, no logic in handler
+    app.assert_no_prior_credit_analysis()
+    session.assert_context_loaded()
+    session.assert_not_completed()
+    session.assert_model_version_consistent(model_version)
+
+    # DETERMINE
     decision = CreditDecision(
         risk_tier=RiskTier(risk_tier),
         recommended_limit_usd=Decimal(str(recommended_limit_usd)),
@@ -201,9 +187,11 @@ async def handle_credit_analysis_completed(
         policy_overrides_applied=policy_overrides or [],
     )
 
-    import hashlib, json
     input_hash = hashlib.sha256(
-        json.dumps({"app": application_id, "session": session_id}, sort_keys=True).encode()
+        json.dumps(
+            {"app": application_id, "session": session_id},
+            sort_keys=True,
+        ).encode()
     ).hexdigest()[:16]
 
     event = CreditAnalysisCompleted(
@@ -217,12 +205,14 @@ async def handle_credit_analysis_completed(
         completed_at=_now(),
     ).to_store_dict()
 
+    # APPEND
     credit_ver = await store.stream_version(f"credit-{application_id}")
     await store.append(
         stream_id=f"credit-{application_id}",
         events=[event],
         expected_version=credit_ver,
         causation_id=session_id,
+        correlation_id=correlation_id or application_id,
     )
 
 
@@ -232,16 +222,27 @@ async def handle_fraud_screening_completed(
     store,
     application_id: str,
     session_id: str,
+    agent_type: str,
     fraud_score: float,
     risk_level: str,
     recommendation: str,
     screening_model_version: str,
     anomalies_found: int = 0,
+    correlation_id: str | None = None,
 ) -> None:
     """Record FraudDetectionAgent completing its screening."""
     from schema.events import FraudScreeningCompleted
     import hashlib, json
 
+    # LOAD
+    session = await AgentSessionAggregate.load(store, agent_type, session_id)
+
+    # VALIDATE
+    session.assert_context_loaded()
+    session.assert_not_completed()
+    session.assert_model_version_consistent(screening_model_version)
+
+    # DETERMINE
     input_hash = hashlib.sha256(
         json.dumps({"app": application_id, "session": session_id}).encode()
     ).hexdigest()[:16]
@@ -258,12 +259,14 @@ async def handle_fraud_screening_completed(
         completed_at=_now(),
     ).to_store_dict()
 
+    # APPEND
     fraud_ver = await store.stream_version(f"fraud-{application_id}")
     await store.append(
         stream_id=f"fraud-{application_id}",
         events=[event],
         expected_version=fraud_ver,
         causation_id=session_id,
+        correlation_id=correlation_id or application_id,
     )
 
 
@@ -273,16 +276,26 @@ async def handle_compliance_check(
     store,
     application_id: str,
     session_id: str,
+    agent_type: str,
     rules_evaluated: int,
     rules_passed: int,
     rules_failed: int,
     rules_noted: int,
     has_hard_block: bool,
     overall_verdict: str,
+    correlation_id: str | None = None,
 ) -> None:
     """Record ComplianceAgent completing its rule evaluation."""
     from schema.events import ComplianceCheckCompleted, ComplianceVerdict
 
+    # LOAD
+    session = await AgentSessionAggregate.load(store, agent_type, session_id)
+
+    # VALIDATE
+    session.assert_context_loaded()
+    session.assert_not_completed()
+
+    # DETERMINE
     event = ComplianceCheckCompleted(
         application_id=application_id,
         session_id=session_id,
@@ -295,11 +308,14 @@ async def handle_compliance_check(
         completed_at=_now(),
     ).to_store_dict()
 
+    # APPEND
     compliance_ver = await store.stream_version(f"compliance-{application_id}")
     await store.append(
         stream_id=f"compliance-{application_id}",
         events=[event],
         expected_version=compliance_ver,
+        causation_id=session_id,
+        correlation_id=correlation_id or application_id,
     )
 
 
@@ -321,14 +337,18 @@ async def handle_generate_decision(
 ) -> None:
     """
     Generate the final orchestrator decision.
-    Enforces business rules:
-      - confidence < 0.60 → must be REFER
-      - compliance BLOCKED → must be DECLINE
+    All business rule enforcement delegated to aggregate.
     """
+    # LOAD
     app = await LoanApplicationAggregate.load(store, application_id)
+
+    # VALIDATE — aggregate enforces all rules
     app.assert_analyses_complete()
     app.assert_valid_orchestrator_decision(recommendation, confidence)
+    if contributing_sessions:
+        app.assert_valid_contributing_sessions(contributing_sessions)
 
+    # DETERMINE
     event = DecisionGenerated(
         application_id=application_id,
         orchestrator_session_id=orchestrator_session_id,
@@ -346,6 +366,7 @@ async def handle_generate_decision(
         generated_at=_now(),
     ).to_store_dict()
 
+    # APPEND
     await store.append(
         stream_id=f"loan-{application_id}",
         events=[event],
@@ -371,21 +392,22 @@ async def handle_human_review_completed(
     conditions: list[str] | None = None,
     decline_reasons: list[str] | None = None,
     correlation_id: str | None = None,
-    causation_id: str | None = None,
 ) -> None:
     """
     Record a human loan officer's review decision.
-    If override=True, override_reason is required.
-    Appends HumanReviewCompleted + ApplicationApproved or ApplicationDeclined.
+    override_reason required when override=True — enforced here as
+    it is a UI/input concern, not an aggregate invariant.
     """
-    if override and not override_reason:
-        raise ValueError(
-            "override_reason is required when override=True. "
-            "The loan officer must justify overriding the AI recommendation."
-        )
-
+    # LOAD
     app = await LoanApplicationAggregate.load(store, application_id)
 
+    # VALIDATE
+    if override and not override_reason:
+        raise ValueError(
+            "override_reason is required when override=True."
+        )
+
+    # DETERMINE — two events written atomically
     review_event = HumanReviewCompleted(
         application_id=application_id,
         reviewer_id=reviewer_id,
@@ -423,10 +445,11 @@ async def handle_human_review_completed(
         ).to_store_dict()
         events.append(decline_event)
 
+    # APPEND — both events atomic
     await store.append(
         stream_id=f"loan-{application_id}",
         events=events,
         expected_version=app.version,
-        causation_id=causation_id,
-        correlation_id=correlation_id or application_id,    
+        causation_id=reviewer_id,
+        correlation_id=correlation_id or application_id,
     )
