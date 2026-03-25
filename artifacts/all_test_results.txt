@@ -1,0 +1,56 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.9, pytest-8.4.2, pluggy-1.6.0 -- C:\Users\derej\AppData\Local\Programs\Python\Python311\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\derej\Desktop\Intesive\ledger
+configfile: pytest.ini
+plugins: anyio-4.12.1, Faker-25.9.2, langsmith-0.7.6, asyncio-0.24.0
+asyncio: mode=Mode.AUTO, default_loop_scope=None
+collecting ... collected 45 items
+
+tests/test_concurrency.py::test_double_decision_exactly_one_wins PASSED  [  2%]
+tests/test_concurrency.py::test_concurrent_appends_to_different_streams_both_succeed PASSED [  4%]
+tests/test_concurrency.py::test_five_concurrent_appends_exactly_one_wins PASSED [  6%]
+tests/test_concurrency.py::test_occ_error_contains_correct_versions PASSED [  8%]
+tests/test_concurrency.py::test_fifty_concurrent_writers_no_data_corruption PASSED [ 11%]
+tests/test_concurrency.py::test_cannot_append_to_archived_stream PASSED  [ 13%]
+tests/test_concurrency.py::test_archive_nonexistent_stream_raises PASSED [ 15%]
+tests/test_concurrency.py::test_archive_is_idempotent PASSED             [ 17%]
+tests/test_event_store.py::test_append_new_stream PASSED                 [ 20%]
+tests/test_event_store.py::test_append_existing_stream PASSED            [ 22%]
+tests/test_event_store.py::test_occ_wrong_version_raises PASSED          [ 24%]
+tests/test_event_store.py::test_concurrent_double_append_exactly_one_succeeds PASSED [ 26%]
+tests/test_event_store.py::test_load_stream_ordered PASSED               [ 28%]
+tests/test_event_store.py::test_stream_version PASSED                    [ 31%]
+tests/test_event_store.py::test_stream_version_nonexistent PASSED        [ 33%]
+tests/test_event_store.py::test_load_all_yields_in_global_order PASSED   [ 35%]
+tests/test_event_store.py::test_postgres_concurrent_double_append_exactly_one_succeeds PASSED [ 37%]
+tests/test_invariants.py::test_low_confidence_cannot_approve PASSED      [ 40%]
+tests/test_invariants.py::test_low_confidence_forces_refer PASSED        [ 42%]
+tests/test_invariants.py::test_borderline_confidence_exactly_060_can_approve PASSED [ 44%]
+tests/test_invariants.py::test_compliance_blocked_cannot_approve PASSED  [ 46%]
+tests/test_invariants.py::test_compliance_blocked_cannot_refer PASSED    [ 48%]
+tests/test_invariants.py::test_compliance_blocked_can_decline PASSED     [ 51%]
+tests/test_invariants.py::test_cannot_decide_without_credit_analysis PASSED [ 53%]
+tests/test_invariants.py::test_cannot_decide_without_fraud_screening PASSED [ 55%]
+tests/test_invariants.py::test_duplicate_application_rejected PASSED     [ 57%]
+tests/test_invariants.py::test_override_without_reason_rejected PASSED   [ 60%]
+tests/test_invariants.py::test_agent_context_not_loaded_raises PASSED    [ 62%]
+tests/test_invariants.py::test_model_version_mismatch_raises PASSED      [ 64%]
+tests/test_invariants.py::test_same_model_version_passes PASSED          [ 66%]
+tests/test_narratives.py::test_narr01_concurrent_occ_collision SKIPPED   [ 68%]
+tests/test_narratives.py::test_narr02_document_extraction_failure SKIPPED [ 71%]
+tests/test_narratives.py::test_narr03_agent_crash_recovery SKIPPED (...) [ 73%]
+tests/test_narratives.py::test_narr04_compliance_hard_block SKIPPED      [ 75%]
+tests/test_narratives.py::test_narr05_human_override SKIPPED (Implem...) [ 77%]
+tests/test_schema_and_generator.py::test_event_registry_completeness PASSED [ 80%]
+tests/test_schema_and_generator.py::test_financial_facts_decimal_precision PASSED [ 82%]
+tests/test_schema_and_generator.py::test_companies_gaap_balance_sheet PASSED [ 84%]
+tests/test_schema_and_generator.py::test_companies_trajectory_distribution PASSED [ 86%]
+tests/test_schema_and_generator.py::test_montana_company_exists PASSED   [ 88%]
+tests/test_schema_and_generator.py::test_simulator_approved_path PASSED  [ 91%]
+tests/test_schema_and_generator.py::test_simulator_declined_compliance PASSED [ 93%]
+tests/test_schema_and_generator.py::test_simulator_agent_session_sequence PASSED [ 95%]
+tests/test_schema_and_generator.py::test_schema_validator_catches_bad_event PASSED [ 97%]
+tests/test_schema_and_generator.py::test_all_seed_events_validate PASSED [100%]
+
+======================== 40 passed, 5 skipped in 2.68s ========================

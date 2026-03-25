@@ -42,8 +42,8 @@ from uuid import uuid4
 
 from langgraph.graph import StateGraph, END
 
-from ledger.agents.base_agent import BaseApexAgent
-from ledger.schema.events import (
+from agents.base_agent import BaseApexAgent
+from schema.events import (
     CreditRecordOpened, HistoricalProfileConsumed, ExtractedFactsConsumed,
     CreditAnalysisCompleted, CreditAnalysisDeferred,
     FraudScreeningRequested,
@@ -382,6 +382,8 @@ Provide your analysis as JSON."""
         try:
             content, ti, to, cost = await self._call_llm(SYSTEM, USER, max_tokens=1024)
             decision = self._parse_json(content)
+            if not decision: 
+                raise ValueError("LLM returned empty JSON")
         except Exception as exc:
             # Safe fallback — confidence < 0.60 forces REFER downstream
             decision = {

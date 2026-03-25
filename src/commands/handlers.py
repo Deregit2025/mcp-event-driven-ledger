@@ -338,9 +338,50 @@ async def handle_generate_decision(
     """
     Generate the final orchestrator decision.
     All business rule enforcement delegated to aggregate.
+
+    Cross-stream backfill: when agent tools write results to separate domain
+    streams (credit-, fraud-, compliance-) rather than the loan stream,
+    we scan those streams here to populate the aggregate's derived fields
+    before running assert_analyses_complete.
     """
     # LOAD
     app = await LoanApplicationAggregate.load(store, application_id)
+
+    # CROSS-STREAM BACKFILL — read domain streams to populate derived fields
+    # that the MCP tool pipeline writes to separate streams, not the loan stream.
+    if app.credit_confidence is None:
+        for ev in await store.load_stream(f"credit-{application_id}"):
+            if ev.get("event_type") == "CreditAnalysisCompleted":
+                decision = ev.get("payload", {}).get("decision", {})
+                if isinstance(decision, dict):
+                    app.credit_confidence = decision.get("confidence")
+                    app.credit_risk_tier = decision.get("risk_tier")
+                    app.has_credit_analysis = True
+                    session_id = ev.get("payload", {}).get("session_id", "")
+                    if session_id:
+                        app.valid_session_ids.add(session_id)
+                break
+
+    if app.fraud_score is None:
+        for ev in await store.load_stream(f"fraud-{application_id}"):
+            if ev.get("event_type") == "FraudScreeningCompleted":
+                payload = ev.get("payload", {})
+                app.fraud_score = payload.get("fraud_score")
+                session_id = payload.get("session_id", "")
+                if session_id:
+                    app.valid_session_ids.add(session_id)
+                break
+
+    if app.compliance_verdict is None:
+        for ev in await store.load_stream(f"compliance-{application_id}"):
+            if ev.get("event_type") == "ComplianceCheckCompleted":
+                payload = ev.get("payload", {})
+                app.compliance_verdict = payload.get("overall_verdict")
+                app.compliance_has_hard_block = payload.get("has_hard_block", False)
+                session_id = payload.get("session_id", "")
+                if session_id:
+                    app.valid_session_ids.add(session_id)
+                break
 
     # VALIDATE — aggregate enforces all rules
     app.assert_analyses_complete()

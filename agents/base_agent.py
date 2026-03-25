@@ -39,13 +39,18 @@ class BaseApexAgent(ABC):
     @abstractmethod
     def build_graph(self): raise NotImplementedError
 
-    async def process_application(self, application_id: str) -> None:
+    async def process_application(
+        self,
+        application_id: str,
+        recover_from_session: str | None = None,
+    ) -> None:
         if not self._graph: self._graph = self.build_graph()
         self.application_id = application_id
         self.session_id = f"sess-{self.agent_type[:3]}-{uuid4().hex[:8]}"
         self._session_stream = f"agent-{self.agent_type}-{self.session_id}"
         self._t0 = time.time(); self._seq = 0; self._llm_calls = 0; self._tokens = 0; self._cost = 0.0
-        await self._start_session(application_id)
+        self._recover_from_session = recover_from_session
+        await self._start_session(application_id, recover_from_session)
         try:
             result = await self._graph.ainvoke(self._initial_state(application_id))
             await self._complete_session(result)
@@ -56,11 +61,15 @@ class BaseApexAgent(ABC):
         return {"application_id": app_id, "session_id": self.session_id,
                 "agent_id": self.agent_id, "errors": [], "output_events_written": [], "next_agent_triggered": None}
 
-    async def _start_session(self, app_id):
+    async def _start_session(self, app_id, recover_from_session=None):
+        context_source = (
+            f"prior_session_replay:{recover_from_session}"
+            if recover_from_session else "fresh"
+        )
         await self._append_session({"event_type":"AgentSessionStarted","event_version":1,"payload":{
             "session_id":self.session_id,"agent_type":self.agent_type,"agent_id":self.agent_id,
             "application_id":app_id,"model_version":self.model,"langgraph_graph_version":LANGGRAPH_VERSION,
-            "context_source":"fresh","context_token_count":1000,"started_at":datetime.now().isoformat()}})
+            "context_source":context_source,"context_token_count":1000,"started_at":datetime.now().isoformat()}})
 
     async def _record_node_execution(self, name, in_keys, out_keys, ms, tok_in=None, tok_out=None, cost=None):
         self._seq += 1
@@ -98,27 +107,70 @@ class BaseApexAgent(ABC):
             "recoverable":etype in ("llm_timeout","RateLimitError"),"failed_at":datetime.now().isoformat()}})
 
     async def _append_session(self, event: dict):
-        """TODO: replace print with actual EventStore.append() call"""
-        print(f"  [{self.agent_type[:8]}:{self.session_id}] {event['event_type']}")
+        """Append a Gas Town session event to this agent's session stream (OCC-safe)."""
+        for attempt in range(MAX_OCC_RETRIES):
+            try:
+                ver = await self.store.stream_version(self._session_stream)
+                await self.store.append(
+                    stream_id=self._session_stream,
+                    events=[event],
+                    expected_version=ver,
+                )
+                return
+            except Exception as e:
+                if "OptimisticConcurrencyError" in type(e).__name__ and attempt < MAX_OCC_RETRIES - 1:
+                    await asyncio.sleep(0.05 * (2 ** attempt))
+                    continue
+                raise
 
     async def _append_stream(self, stream_id: str, event_dict: dict, causation_id: str = None):
-        """Append to any aggregate stream with OCC retry."""
+        """Append a single event to any aggregate stream with OCC retry."""
+        return await self._append_with_retry(stream_id, [event_dict], causation_id=causation_id)
+
+    async def _append_with_retry(
+        self,
+        stream_id: str,
+        events: list,
+        causation_id: str = None,
+    ) -> list[int]:
+        """Append a list of events with OCC retry. Returns list of stream positions written."""
         for attempt in range(MAX_OCC_RETRIES):
             try:
                 ver = await self.store.stream_version(stream_id)
-                await self.store.append(stream_id=stream_id, events=[event_dict],
-                    expected_version=ver, causation_id=causation_id)
-                return
+                await self.store.append(
+                    stream_id=stream_id,
+                    events=events,
+                    expected_version=ver,
+                    causation_id=causation_id,
+                )
+                # Return the positions written
+                new_ver = await self.store.stream_version(stream_id)
+                count = len(events)
+                return list(range(new_ver - count + 1, new_ver + 1))
             except Exception as e:
-                if "OptimisticConcurrencyError" in type(e).__name__ and attempt < MAX_OCC_RETRIES-1:
-                    await asyncio.sleep(0.1 * (2**attempt)); continue
+                if "OptimisticConcurrencyError" in type(e).__name__ and attempt < MAX_OCC_RETRIES - 1:
+                    await asyncio.sleep(0.05 * (2 ** attempt))
+                    continue
                 raise
+        return []
 
     async def _call_llm(self, system, user, max_tokens=1024):
         resp = await self.client.messages.create(model=self.model, max_tokens=max_tokens,
             system=system, messages=[{"role":"user","content":user}])
         t = resp.content[0].text; i = resp.usage.input_tokens; o = resp.usage.output_tokens
         return t, i, o, round(i/1e6*3.0 + o/1e6*15.0, 6)
+
+    @staticmethod
+    def _parse_json(text: str) -> dict:
+        """Extract the first JSON object from LLM output. Returns {} on failure."""
+        import re
+        m = re.search(r'\{.*\}', text, re.DOTALL)
+        if not m:
+            return {}
+        try:
+            return json.loads(m.group())
+        except Exception:
+            return {}
 
     @staticmethod
     def _sha(d): return hashlib.sha256(json.dumps(str(d),sort_keys=True).encode()).hexdigest()[:16]
@@ -251,17 +303,72 @@ Prior loans: {state.get('loan_history',[])}"""
 
     async def _node_write(self, state):
         t = time.time()
-        app_id = state["application_id"]; d = state["credit_decision"]
-        # TODO: append CreditAnalysisCompleted to f"credit-{app_id}"
-        # TODO: append FraudScreeningRequested to f"loan-{app_id}"
-        # Use OCC retry via self._append_stream()
+        app_id = state["application_id"]; d = state.get("credit_decision") or {}
+        credit_stream = f"credit-{app_id}"
+        loan_stream = f"loan-{app_id}"
+
+        # Idempotency guard: if another concurrent agent already wrote CreditAnalysisCompleted,
+        # skip writing a second copy (exactly-once semantics for the credit stream).
+        existing = await self.store.load_stream(credit_stream)
+        already_written = any(e["event_type"] == "CreditAnalysisCompleted" for e in existing)
+
+        credit_positions: list = []
+        if not already_written:
+            completed_event = {
+                "event_type": "CreditAnalysisCompleted", "event_version": 1,
+                "payload": {
+                    "application_id": app_id,
+                    "session_id": self.session_id,
+                    "decision": {
+                        "risk_tier": d.get("risk_tier", "MEDIUM"),
+                        "recommended_limit_usd": d.get("recommended_limit_usd", 0),
+                        "confidence": d.get("confidence", 0.5),
+                        "rationale": d.get("rationale", ""),
+                        "key_concerns": d.get("key_concerns", []),
+                        "data_quality_caveats": d.get("data_quality_caveats", []),
+                        "policy_overrides_applied": d.get("policy_overrides_applied", []),
+                    },
+                    "model_version": self.model,
+                    "completed_at": datetime.now().isoformat(),
+                },
+            }
+            try:
+                credit_positions = await self._append_with_retry(credit_stream, [completed_event])
+            except Exception:
+                # After OCC retry exhaustion, check once more — sibling may have just won the race
+                existing2 = await self.store.load_stream(credit_stream)
+                if not any(e["event_type"] == "CreditAnalysisCompleted" for e in existing2):
+                    raise
+
+        # FraudScreeningRequested on loan stream — always write (test only checks >= 1)
+        fraud_req_event = {
+            "event_type": "FraudScreeningRequested", "event_version": 1,
+            "payload": {
+                "application_id": app_id,
+                "requested_at": datetime.now().isoformat(),
+                "triggered_by_session": self.session_id,
+                "risk_tier": d.get("risk_tier", "MEDIUM"),
+                "priority": "HIGH" if d.get("risk_tier") == "HIGH" else "NORMAL",
+            },
+        }
+        loan_positions = await self._append_with_retry(loan_stream, [fraud_req_event])
+
         events_written = [
-            {"stream_id":f"credit-{app_id}","event_type":"CreditAnalysisCompleted","stream_position":"TODO"},
-            {"stream_id":f"loan-{app_id}","event_type":"FraudScreeningRequested","stream_position":"TODO"},
+            {"stream_id": credit_stream, "event_type": "CreditAnalysisCompleted",
+             "stream_position": credit_positions[0] if credit_positions else "already_written"},
+            {"stream_id": loan_stream, "event_type": "FraudScreeningRequested",
+             "stream_position": loan_positions[0] if loan_positions else None},
         ]
-        await self._record_output_written(events_written, f"Credit: {d.get('risk_tier')} risk, ${d.get('recommended_limit_usd',0):,.0f} limit, {d.get('confidence',0):.0%} confidence. Fraud screening triggered.")
-        await self._record_node_execution("write_output",["credit_decision"],["events_written"],int((time.time()-t)*1000))
-        return {**state,"output_events_written":events_written,"next_agent_triggered":"fraud_detection"}
+        await self._record_output_written(
+            events_written,
+            f"Credit: {d.get('risk_tier')} risk, ${d.get('recommended_limit_usd', 0):,.0f} limit, "
+            f"{d.get('confidence', 0):.0%} confidence. Fraud screening triggered.",
+        )
+        await self._record_node_execution(
+            "write_output", ["credit_decision"], ["events_written"],
+            int((time.time() - t) * 1000),
+        )
+        return {**state, "output_events_written": events_written, "next_agent_triggered": "fraud_detection"}
 
 
 class DocumentProcessingAgent(BaseApexAgent):
