@@ -8,6 +8,10 @@ events to the event store. Each tool validates inputs, calls the
 appropriate command handler, and returns structured results.
 
 Tool naming follows MCP convention: ledger_{action}
+
+All tool descriptions include explicit PRECONDITION documentation
+so that LLM consumers (Claude Desktop, agents) know exactly what
+must be called first and what errors to expect on failure.
 """
 from __future__ import annotations
 import logging
@@ -24,7 +28,11 @@ TOOL_DEFINITIONS = [
         "description": (
             "Submit a new loan application to Apex Financial Services. "
             "Creates the loan event stream and writes ApplicationSubmitted. "
-            "Returns the stream_id created."
+            "PRECONDITION: application_id must be unique — calling with a duplicate "
+            "application_id returns error_type=DuplicateApplicationError. "
+            "This is the required FIRST call in every loan lifecycle. "
+            "All other tools require this to be called first. "
+            "Returns stream_id and status=submitted on success."
         ),
         "inputSchema": {
             "type": "object",
@@ -62,11 +70,16 @@ TOOL_DEFINITIONS = [
     {
         "name": "ledger_start_agent_session",
         "description": (
-            "Start an agent session — Gas Town anchor event. "
-            "PRECONDITION: Must be called before any agent decision tools "
-            "(ledger_record_credit_analysis, ledger_record_fraud_screening, etc). "
-            "Calling decision tools without an active session returns PreconditionFailed. "
-            "Returns the session stream_id."
+            "Start an agent session and write the Gas Town anchor event (AgentSessionStarted). "
+            "PRECONDITION: ledger_submit_application must have been called first for this application_id. "
+            "PRECONDITION: session_id must be globally unique — duplicate session_id returns error_type=DuplicateSessionError. "
+            "PRECONDITION: This tool MUST be called before any of these tools: "
+            "ledger_record_credit_analysis, ledger_record_fraud_screening, "
+            "ledger_record_compliance_check. Calling those without an active session "
+            "returns error_type=PreconditionFailed with message='No active agent session found'. "
+            "agent_type must be one of: credit_analysis, fraud_detection, compliance, "
+            "document_processing, orchestrator, decision_orchestrator. "
+            "Returns stream_id and status=session_started on success."
         ),
         "inputSchema": {
             "type": "object",
@@ -91,10 +104,16 @@ TOOL_DEFINITIONS = [
     {
         "name": "ledger_record_credit_analysis",
         "description": (
-            "Record that a CreditAnalysisAgent has completed its analysis. "
-            "PRECONDITION: Requires an active agent session created by ledger_start_agent_session. "
-            "Enforces business rules: no prior credit analysis unless overridden; "
-            "confidence < 0.60 requires recommendation=REFER."
+            "Record completed credit analysis for a loan application. "
+            "PRECONDITION: ledger_start_agent_session must have been called with "
+            "agent_type=credit_analysis for this session_id before calling this tool. "
+            "Calling without an active session returns error_type=PreconditionFailed. "
+            "PRECONDITION: ledger_submit_application must have been called for this application_id. "
+            "PRECONDITION: Only one credit analysis may be recorded per application unless "
+            "a HumanReviewOverride has been issued — duplicate analysis returns "
+            "error_type=ModelVersionLockedError. "
+            "BUSINESS RULE: confidence < 0.60 requires risk_tier to reflect HIGH or VERY_HIGH risk. "
+            "Returns status=credit_analysis_recorded on success."
         ),
         "inputSchema": {
             "type": "object",
@@ -119,8 +138,13 @@ TOOL_DEFINITIONS = [
     {
         "name": "ledger_record_fraud_screening",
         "description": (
-            "Record that a FraudDetectionAgent has completed fraud screening. "
-            "PRECONDITION: Requires an active agent session created by ledger_start_agent_session."
+            "Record completed fraud screening for a loan application. "
+            "PRECONDITION: ledger_start_agent_session must have been called with "
+            "agent_type=fraud_detection for this session_id before calling this tool. "
+            "Calling without an active session returns error_type=PreconditionFailed. "
+            "PRECONDITION: ledger_submit_application must have been called for this application_id. "
+            "fraud_score must be between 0.0 (no fraud) and 1.0 (definite fraud). "
+            "Returns status=fraud_screening_recorded on success."
         ),
         "inputSchema": {
             "type": "object",
@@ -140,9 +164,14 @@ TOOL_DEFINITIONS = [
     {
         "name": "ledger_record_compliance_check",
         "description": (
-            "Record that a ComplianceAgent has completed its rule evaluation. "
-            "PRECONDITION: Requires an active agent session created by ledger_start_agent_session. "
-            "A HARD_BLOCK forces the final decision to DECLINE regardless of other analyses."
+            "Record completed compliance rule evaluation for a loan application. "
+            "PRECONDITION: ledger_start_agent_session must have been called with "
+            "agent_type=compliance for this session_id before calling this tool. "
+            "Calling without an active session returns error_type=PreconditionFailed. "
+            "PRECONDITION: ledger_submit_application must have been called for this application_id. "
+            "BUSINESS RULE: If has_hard_block=true, the final decision MUST be DECLINE — "
+            "ledger_generate_decision will enforce this regardless of recommendation. "
+            "Returns status=compliance_recorded, has_hard_block, and verdict on success."
         ),
         "inputSchema": {
             "type": "object",
@@ -165,9 +194,19 @@ TOOL_DEFINITIONS = [
         "name": "ledger_generate_decision",
         "description": (
             "Generate the orchestrator's final decision on a loan application. "
-            "PRECONDITION: All three analyses (credit, fraud, compliance) must be recorded first. "
-            "Enforces: confidence floor (< 0.6 forces REFER), compliance clearance, "
-            "contributing sessions must reference valid agent sessions for this application."
+            "PRECONDITION: All three analyses must be recorded BEFORE calling this tool: "
+            "(1) ledger_record_credit_analysis, "
+            "(2) ledger_record_fraud_screening, "
+            "(3) ledger_record_compliance_check. "
+            "Calling without all three returns error_type=AnalysesIncompleteError. "
+            "PRECONDITION: ledger_start_agent_session must have been called with "
+            "agent_type=orchestrator for this orchestrator_session_id. "
+            "Calling without an active orchestrator session returns error_type=PreconditionFailed. "
+            "BUSINESS RULE: confidence < 0.60 forces recommendation=REFER regardless of input. "
+            "BUSINESS RULE: has_hard_block=true from compliance forces recommendation=DECLINE. "
+            "BUSINESS RULE: contributing_sessions must reference valid session IDs that "
+            "processed this application — invalid sessions return error_type=CausalChainError. "
+            "Returns status=decision_generated and recommendation on success."
         ),
         "inputSchema": {
             "type": "object",
@@ -190,10 +229,15 @@ TOOL_DEFINITIONS = [
         "name": "ledger_record_human_review",
         "description": (
             "Record a human loan officer's final review decision. "
-            "PRECONDITION: A DecisionGenerated event must exist for this application — "
-            "call ledger_generate_decision first. "
-            "If override=true, override_reason is required. "
-            "Automatically appends ApplicationApproved or ApplicationDeclined based on final_decision."
+            "PRECONDITION: ledger_generate_decision must have been called for this application_id "
+            "before calling this tool — calling without a prior decision returns "
+            "error_type=PreconditionFailed. "
+            "PRECONDITION: If override=true, override_reason is REQUIRED — omitting it "
+            "returns error_type=ValidationError with message='override_reason required when override=true'. "
+            "final_decision must be APPROVE or DECLINE — any other value returns error_type=ValidationError. "
+            "Automatically appends ApplicationApproved or ApplicationDeclined event "
+            "in the same transaction as HumanReviewCompleted. "
+            "Returns status=human_review_recorded, final_decision, and override on success."
         ),
         "inputSchema": {
             "type": "object",
@@ -232,11 +276,15 @@ TOOL_DEFINITIONS = [
     {
         "name": "ledger_run_integrity_check",
         "description": (
-            "Run a cryptographic integrity check on a loan application's event stream. "
-            "Computes SHA-256 hash chain over all events and verifies against stored chain. "
-            "Returns chain_valid=false and tamper_detected=true if any stored event was modified. "
-            "Appends an AuditIntegrityCheckRun event to the audit stream. "
-            "Rate-limited: call at most once per minute per application."
+            "Run a cryptographic SHA-256 hash chain integrity check on a loan application's event stream. "
+            "Verifies that no stored events have been modified, deleted, or tampered with since they were written. "
+            "PRECONDITION: ledger_submit_application must have been called for this application_id — "
+            "calling on a non-existent application returns error_type=StreamNotFoundError. "
+            "Returns chain_valid=true and tamper_detected=false if the event stream is intact. "
+            "Returns chain_valid=false and tamper_detected=true if any event was modified. "
+            "Appends an AuditIntegrityCheckRun event to the audit stream as proof of verification. "
+            "entity_type defaults to 'loan' — pass 'credit', 'fraud', or 'compliance' to verify domain streams. "
+            "Returns status=integrity_check_complete, events_verified, chain_valid, and tamper_detected."
         ),
         "inputSchema": {
             "type": "object",
