@@ -28,9 +28,11 @@ class BaseApexAgent(ABC):
     Each tool/registry call must call self._record_tool_call().
     The write_output node must call self._record_output_written() then self._record_node_execution().
     """
-    def __init__(self, agent_id: str, agent_type: str, store, registry, client: AsyncAnthropic, model="claude-sonnet-4-20250514"):
+    def __init__(self, agent_id: str, agent_type: str, store, registry, client: AsyncAnthropic, model=None):
+        import os
+        self.model = model or os.getenv("LLM_MODEL", "anthropic/claude-3-5-sonnet")
         self.agent_id = agent_id; self.agent_type = agent_type
-        self.store = store; self.registry = registry; self.client = client; self.model = model
+        self.store = store; self.registry = registry; self.client = client
         self.session_id = None; self.application_id = None
         self._session_stream = None; self._t0 = None
         self._seq = 0; self._llm_calls = 0; self._tokens = 0; self._cost = 0.0
@@ -96,6 +98,7 @@ class BaseApexAgent(ABC):
         ms = int((time.time()-self._t0)*1000)
         await self._append_session({"event_type":"AgentSessionCompleted","event_version":1,"payload":{
             "session_id":self.session_id,"agent_type":self.agent_type,"application_id":self.application_id,
+            "model_version":self.model,
             "total_nodes_executed":self._seq,"total_llm_calls":self._llm_calls,"total_tokens_used":self._tokens,
             "total_cost_usd":round(self._cost,6),"total_duration_ms":ms,
             "next_agent_triggered":result.get("next_agent_triggered"),"completed_at":datetime.now().isoformat()}})
@@ -103,6 +106,7 @@ class BaseApexAgent(ABC):
     async def _fail_session(self, etype, emsg):
         await self._append_session({"event_type":"AgentSessionFailed","event_version":1,"payload":{
             "session_id":self.session_id,"agent_type":self.agent_type,"application_id":self.application_id,
+            "model_version":self.model,
             "error_type":etype,"error_message":emsg[:500],"last_successful_node":f"node_{self._seq}",
             "recoverable":etype in ("llm_timeout","RateLimitError"),"failed_at":datetime.now().isoformat()}})
 

@@ -119,7 +119,7 @@ class AgentPerformanceLedgerProjection:
             return
 
         agent_type = "credit_analysis"
-        model_version = p.get("model_version", "unknown")
+        model_version = p.get("screening_model_version") or p.get("model_version", "unknown")
         confidence = decision.get("confidence") or 0.0
         risk_tier = decision.get("risk_tier", "")
 

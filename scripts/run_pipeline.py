@@ -41,13 +41,13 @@ DIM    = "\033[2m"
 
 
 def _hdr(msg: str) -> None:
-    print(f"\n{BOLD}{CYAN}{'─' * 60}{RESET}")
+    print(f"\n{BOLD}{CYAN}{'-' * 60}{RESET}")
     print(f"{BOLD}{CYAN}  {msg}{RESET}")
-    print(f"{BOLD}{CYAN}{'─' * 60}{RESET}")
+    print(f"{BOLD}{CYAN}{'-' * 60}{RESET}")
 
 
 def _ok(msg: str) -> None:
-    print(f"  {GREEN}✓{RESET} {msg}")
+    print(f"  {GREEN}[OK]{RESET} {msg}")
 
 
 def _info(msg: str) -> None:
@@ -55,11 +55,11 @@ def _info(msg: str) -> None:
 
 
 def _warn(msg: str) -> None:
-    print(f"  {YELLOW}⚠ {msg}{RESET}")
+    print(f"  {YELLOW}[WARN] {msg}{RESET}")
 
 
 def _err(msg: str) -> None:
-    print(f"  {RED}✗ {msg}{RESET}")
+    print(f"  {RED}[ERR] {msg}{RESET}")
 
 
 # ── MOCK INFRASTRUCTURE ────────────────────────────────────────────────────────
@@ -366,10 +366,15 @@ async def print_audit_summary(store, app_id: str, verbose: bool) -> None:
 
 def _build_client(args, mock_response: str):
     """Return real Anthropic client or mock depending on --mock-llm flag."""
-    if args.mock_llm or not os.getenv("ANTHROPIC_API_KEY"):
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if args.mock_llm or not api_key:
         return MockAnthropicClient(mock_response)
     from anthropic import AsyncAnthropic
-    return AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    kwargs = {"api_key": api_key}
+    if api_key.startswith("sk-or-"):
+        kwargs["base_url"] = "https://openrouter.ai/api/v1"
+        # Also need to map model name if needed, but openrouter treats standard headers automatically usually.
+    return AsyncAnthropic(**kwargs)
 
 
 async def _build_store(args):
@@ -425,7 +430,8 @@ async def main() -> None:
                    help="PostgreSQL DATABASE_URL (overrides .env)")
     p.add_argument("--in-memory", action="store_true",
                    help="Force InMemoryEventStore even if DATABASE_URL is set")
-    p.add_argument("--mock-llm", action="store_true", default=True,
+    has_key = bool(os.getenv("ANTHROPIC_API_KEY"))
+    p.add_argument("--mock-llm", action="store_true", default=not has_key,
                    help="Use mock LLM responses (default: True if no ANTHROPIC_API_KEY)")
     p.add_argument("--real-llm", dest="mock_llm", action="store_false",
                    help="Use real Anthropic API (requires ANTHROPIC_API_KEY in .env)")

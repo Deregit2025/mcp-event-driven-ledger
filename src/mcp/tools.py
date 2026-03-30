@@ -274,6 +274,33 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "ledger_get_compliance",
+        "description": (
+            "Get the compliance audit state for a loan application. "
+            "Supports temporal query — pass as_of parameter to get compliance state "
+            "at a specific past timestamp (ISO8601 format e.g. 2026-03-25T10:00:00Z). "
+            "Without as_of returns current compliance state. "
+            "Use this to demonstrate regulatory time-travel queries. "
+            "Returns rules_evaluated, rules_passed, rules_failed, "
+            "has_hard_block, overall_verdict, and snapshot timestamp. "
+            "PRECONDITION: ledger_submit_application must have been called for this application_id."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "application_id": {
+                    "type": "string",
+                    "description": "Application ID to query, e.g. APEX-DEMO-01",
+                },
+                "as_of": {
+                    "type": "string",
+                    "description": "Optional ISO8601 timestamp — returns compliance state as it existed at that moment",
+                },
+            },
+            "required": ["application_id"],
+        },
+    },
+    {
         "name": "ledger_run_integrity_check",
         "description": (
             "Run a cryptographic SHA-256 hash chain integrity check on a loan application's event stream. "
@@ -302,6 +329,50 @@ TOOL_DEFINITIONS = [
             "required": ["application_id"],
         },
     },
+    {
+        "name": "ledger_get_application",
+        "description": "Read the current status and decisions for a loan application. Returns the ApplicationSummary projection state.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "application_id": {"type": "string"}
+            },
+            "required": ["application_id"]
+        }
+    },
+    {
+        "name": "ledger_get_audit_trail",
+        "description": "Read the complete, authoritative event history for a loan application across all domain streams.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "application_id": {"type": "string"}
+            },
+            "required": ["application_id"]
+        }
+    },
+    {
+        "name": "ledger_get_agent_performance",
+        "description": "Read aggregated performance metrics for a specific agent across all its active LLM model versions.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "e.g., credit_analysis, fraud_detection"}
+            },
+            "required": ["agent_id"]
+        }
+    },
+    {
+        "name": "ledger_get_session",
+        "description": "Read the full event history for a single AI agent session, including nodes executed and tokens used.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string"}
+            },
+            "required": ["session_id"]
+        }
+    }
 ]
 
 
@@ -336,8 +407,9 @@ def _normalise_agent_type(value: str) -> str:
 class LedgerToolExecutor:
     """Executes MCP tool calls against the event store."""
 
-    def __init__(self, store):
+    def __init__(self, store, resource_reader=None):
         self.store = store
+        self.resource_reader = resource_reader
 
     async def execute(self, tool_name: str, arguments: dict) -> dict[str, Any]:
         handlers = {
@@ -348,7 +420,12 @@ class LedgerToolExecutor:
             "ledger_record_compliance_check": self._record_compliance_check,
             "ledger_generate_decision":       self._generate_decision,
             "ledger_record_human_review":     self._record_human_review,
+            "ledger_get_compliance":          self._get_compliance,
             "ledger_run_integrity_check":     self._run_integrity_check,
+            "ledger_get_application":         self._get_application,
+            "ledger_get_audit_trail":         self._get_audit_trail,
+            "ledger_get_agent_performance":   self._get_agent_performance,
+            "ledger_get_session":             self._get_session,
         }
         handler = handlers.get(tool_name)
         if not handler:
@@ -483,6 +560,38 @@ class LedgerToolExecutor:
             "final_decision": args["final_decision"],
             "override": args["override"],
         }
+
+    async def _get_compliance(self, args: dict) -> dict:
+        import json
+        uri = f"ledger://applications/{args['application_id']}/compliance"
+        if args.get("as_of"):
+            uri += f"?as_of={args['as_of']}"
+        result = await self.resource_reader.read(uri)
+        return json.loads(result["contents"][0]["text"])
+
+    async def _get_application(self, args: dict) -> dict:
+        import json
+        uri = f"ledger://applications/{args['application_id']}"
+        result = await self.resource_reader.read(uri)
+        return json.loads(result["contents"][0]["text"])
+
+    async def _get_audit_trail(self, args: dict) -> dict:
+        import json
+        uri = f"ledger://applications/{args['application_id']}/audit-trail"
+        result = await self.resource_reader.read(uri)
+        return json.loads(result["contents"][0]["text"])
+
+    async def _get_agent_performance(self, args: dict) -> dict:
+        import json
+        uri = f"ledger://agents/{args['agent_id']}/performance"
+        result = await self.resource_reader.read(uri)
+        return json.loads(result["contents"][0]["text"])
+
+    async def _get_session(self, args: dict) -> dict:
+        import json
+        uri = f"ledger://sessions/{args['session_id']}"
+        result = await self.resource_reader.read(uri)
+        return json.loads(result["contents"][0]["text"])
 
     async def _run_integrity_check(self, args: dict) -> dict:
         from src.integrity.audit_chain import run_integrity_check

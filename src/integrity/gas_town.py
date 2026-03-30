@@ -290,7 +290,10 @@ def _summarise_event(event_type: str, payload: dict) -> str:
 def _expected_nodes_for_agent(agent_type: str) -> list[str]:
     """Return the expected node sequence for a given agent type."""
     nodes = {
-        "credit_analysis": ["load_financials", "analyse_ratios", "generate_credit_decision"],
+        "credit_analysis": [
+            "validate_inputs", "open_credit_record", "load_applicant_registry",
+            "load_extracted_facts", "analyze_credit_risk", "apply_policy_constraints", "write_output"
+        ],
         "fraud_detection": ["run_transaction_analysis", "check_identity", "generate_fraud_score"],
         "compliance": ["load_regulations", "evaluate_rules", "generate_compliance_verdict"],
         "document_processing": ["extract_documents", "validate_documents", "index_documents"],

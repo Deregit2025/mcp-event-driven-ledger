@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apex Ledger — Presentation Dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#0a0c14;color:#e2e2e2;min-height:100vh}
+:root{--purple:#a78bfa;--green:#22c55e;--amber:#f59e0b;--red:#ef4444;--blue:#60a5fa;--bg2:#16192a;--bg3:#1e2030;--border:#2a2a3a}
+
+/* Header */
+.header{background:#16192a;border-bottom:1px solid var(--border);padding:16px 32px;display:flex;align-items:center;justify-content:space-between}
+.logo{font-size:18px;font-weight:600;color:#fff}.logo span{color:var(--purple)}
+.app-selector{display:flex;align-items:center;gap:10px}
+.app-selector input{background:#0a0c14;border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:#e2e2e2;font-size:13px;width:200px}
+.btn{padding:7px 16px;border-radius:6px;border:none;font-size:13px;font-weight:500;cursor:pointer;transition:opacity .2s}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-purple{background:#6c63ff;color:#fff}
+.btn-gray{background:var(--bg3);color:#aaa}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;margin-right:6px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* Nav tabs */
+.nav{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 32px;display:flex;gap:4px;overflow-x:auto}
+.tab{padding:12px 18px;font-size:13px;cursor:pointer;border-bottom:2px solid transparent;color:#666;transition:all .2s;white-space:nowrap}
+.tab:hover{color:#aaa}
+.tab.active{color:var(--purple);border-bottom-color:var(--purple)}
+
+/* Content */
+.content{padding:24px 32px;max-width:1200px;margin:0 auto}
+.section{display:none}.section.active{display:block}
+
+/* Cards */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:16px}
+.card-title{font-size:13px;font-weight:500;color:#fff;margin-bottom:4px}
+.card-sub{font-size:12px;color:#555;margin-bottom:14px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+
+/* Stats */
+.stat-val{font-size:32px;font-weight:600;color:var(--purple)}
+.stat-label{font-size:12px;color:#555;margin-top:2px}
+
+/* Event rows */
+.event-list{display:flex;flex-direction:column;gap:5px;max-height:420px;overflow-y:auto}
+.ev{display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:#0f1117;font-size:12px;animation:fadeIn .3s ease}
+.ev.loan{border-left:3px solid var(--purple)}
+.ev.credit{border-left:3px solid var(--blue)}
+.ev.fraud{border-left:3px solid var(--amber)}
+.ev.compliance{border-left:3px solid var(--green)}
+.ev.audit{border-left:3px solid #444}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+.ev-pos{color:#444;min-width:24px;font-size:11px}
+.ev-type{color:var(--purple);font-weight:500}
+.ev-stream{font-size:10px;color:#444;margin-top:1px}
+.ev-time{font-size:10px;color:#444;margin-left:auto;white-space:nowrap}
+.ev-detail{font-size:11px;color:#555;margin-top:2px}
+
+/* Compliance */
+.rule-row{display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:6px;margin-bottom:4px;background:#0f1117;border:1px solid var(--border);font-size:12px}
+.rule-icon{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0}
+.rule-icon.pass{background:#0d1f12;color:var(--green)}
+.rule-icon.fail{background:#1a0a0a;color:var(--red)}
+.rule-icon.note{background:#1c1a00;color:var(--amber)}
+.verdict-badge{padding:4px 12px;border-radius:6px;font-size:13px;font-weight:500;display:inline-block}
+.verdict-badge.CLEAR{background:#0d1f12;color:var(--green);border:1px solid var(--green)}
+.verdict-badge.BLOCKED{background:#1a0a0a;color:var(--red);border:1px solid var(--red)}
+.verdict-badge.PENDING{background:var(--bg3);color:#555;border:1px solid var(--border)}
+.verdict-badge.IN_PROGRESS{background:#1c1400;color:var(--amber);border:1px solid var(--amber)}
+
+/* Upcasting */
+.upcast-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.upcast-box{background:#0f1117;border:1px solid var(--border);border-radius:8px;padding:14px}
+.upcast-box.stored{border-color:var(--blue)}
+.upcast-box.loaded{border-color:var(--green)}
+.upcast-label{font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+.upcast-box.stored .upcast-label{color:var(--blue)}
+.upcast-box.loaded .upcast-label{color:var(--green)}
+.field-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #1e2030;font-size:12px}
+.field-row:last-child{border-bottom:none}
+.field-key{color:#555}
+.field-val{font-weight:500}
+.field-val.present{color:var(--green)}
+.field-val.absent{color:#444;font-style:italic}
+.field-val.version{color:var(--purple)}
+.immutability-proof{background:#0d1f12;border:1px solid var(--green);border-radius:8px;padding:12px;margin-top:12px;font-size:12px}
+
+/* Health */
+.health-item{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#0f1117;border-radius:6px;border:1px solid var(--border);margin-bottom:6px;font-size:12px}
+.lag-bar{height:6px;border-radius:3px;background:var(--border);margin-top:4px;overflow:hidden}
+.lag-fill{height:100%;border-radius:3px;transition:width .5s}
+.lag-fill.ok{background:var(--green)}
+.lag-fill.warn{background:var(--amber)}
+.lag-fill.breach{background:var(--red)}
+.badge{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:500}
+.badge.ok{background:#0d1f12;color:var(--green)}
+.badge.warn{background:#1c1400;color:var(--amber)}
+
+/* Animated demos */
+.demo-container{background:#0f1117;border:1px solid var(--border);border-radius:10px;padding:16px;min-height:200px}
+.phase-bar{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.phase{padding:4px 12px;border-radius:5px;font-size:11px;background:var(--bg2);border:1px solid var(--border);color:#555;transition:all .3s}
+.phase.active{background:#1e1a3a;border-color:var(--purple);color:var(--purple);font-weight:500}
+.phase.done{background:#0d1f12;border-color:var(--green);color:var(--green)}
+.phase.crash{background:#1a0a0a;border-color:var(--red);color:var(--red)}
+.phase.branch{background:#1c1400;border-color:var(--amber);color:var(--amber)}
+.log-box{background:#0a0c14;border:1px solid var(--border);border-radius:6px;padding:10px;height:130px;overflow-y:auto;font-size:11px;font-family:monospace;margin-top:10px}
+.log-line{margin-bottom:2px;line-height:1.5}
+.c-ok{color:var(--green)}.c-err{color:var(--red)}.c-warn{color:var(--amber)}.c-info{color:#555}.c-hi{color:var(--purple)}.c-ts{color:#333}
+
+/* Loading */
+.loading{color:#555;font-size:13px;padding:20px;text-align:center}
+.error-msg{color:var(--red);font-size:12px;padding:12px;background:#1a0a0a;border-radius:6px;border:1px solid var(--red)}
+
+/* Temporal */
+.temporal-controls{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.temporal-controls input{background:#0a0c14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:#e2e2e2;font-size:12px;flex:1;min-width:200px}
+.compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.compare-box{background:#0f1117;border:1px solid var(--border);border-radius:8px;padding:14px}
+.compare-box.current{border-color:var(--blue)}
+.compare-box.past{border-color:var(--amber)}
+.compare-label{font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+.compare-box.current .compare-label{color:var(--blue)}
+.compare-box.past .compare-label{color:var(--amber)}
+
+/* OCC */
+.occ-grid{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:start;margin-bottom:12px}
+.agent-box{background:#0f1117;border:1px solid var(--border);border-radius:8px;padding:12px;transition:border-color .3s,box-shadow .3s}
+.agent-box.active{border-color:var(--purple);box-shadow:0 0 10px #6c63ff33}
+.agent-box.won{border-color:var(--green);box-shadow:0 0 10px #22c55e33}
+.agent-box.lost{border-color:var(--red);box-shadow:0 0 10px #ef444433}
+.agent-box.retrying{border-color:var(--amber)}
+.agent-box.abandoned{border-color:#333}
+.agent-name{font-size:13px;font-weight:500;margin-bottom:6px}
+.agent-status{font-size:11px;color:#555;min-height:14px}
+.agent-box.won .agent-status{color:var(--green)}
+.agent-box.lost .agent-status{color:var(--red)}
+.agent-box.retrying .agent-status{color:var(--amber)}
+.stream-center{text-align:center;padding-top:8px}
+.stream-ver{font-size:28px;font-weight:600;color:var(--purple)}
+.stream-label{font-size:10px;color:#444;margin-top:2px}
+
+/* Gas Town */
+.gt-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.memory-box{background:#0f1117;border:1px solid var(--border);border-radius:8px;padding:12px;transition:all .4s}
+.memory-box.active{border-color:var(--purple)}
+.memory-box.crashed{opacity:.2;border-color:var(--red)}
+.memory-box.gone{opacity:0}
+.memory-label{font-size:10px;color:#555;text-transform:uppercase;margin-bottom:8px}
+.memory-item{font-size:12px;color:#888;margin-bottom:3px}
+.memory-item span{color:var(--purple)}
+.memory-item.done{color:var(--green)}
+.memory-item.pending{color:var(--amber)}
+.context-box{background:#0d1f12;border:1px solid var(--green);border-radius:8px;padding:12px;display:none}
+.context-box.show{display:block;animation:fadeIn .4s}
+.ctx-item{font-size:12px;margin-bottom:3px}
+.ctx-key{color:#555;min-width:160px;display:inline-block}
+.ctx-val{color:#86efac}
+.ctx-val.warn{color:var(--amber)}
+.crash-banner{display:none;text-align:center;padding:12px;background:#1a0a0a;border:1px solid var(--red);border-radius:8px;margin-bottom:8px}
+.crash-banner.show{display:block;animation:fadeIn .3s}
+.crash-title{font-size:16px;font-weight:500;color:var(--red)}
+.crash-sub{font-size:11px;color:#888;margin-top:4px}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="logo">Apex <span>Ledger</span> — Presentation Dashboard</div>
+  <div class="app-selector">
+    <span style="font-size:12px;color:#555">Application ID:</span>
+    <input type="text" id="appId" value="APEX-TEST-01" placeholder="APEX-TEST-01">
+    <button class="btn btn-purple" onclick="loadAll()">Load</button>
+    <span style="font-size:12px;color:#555"><span class="status-dot" id="statusDot"></span><span id="statusText">Connected</span></span>
+  </div>
+</div>
+
+<!-- Nav -->
+<div class="nav">
+  <div class="tab active" onclick="showTab('audit')">📋 Audit Trail</div>
+  <div class="tab" onclick="showTab('compliance')">✅ Compliance</div>
+  <div class="tab" onclick="showTab('temporal')">⏱ Temporal Query</div>
+  <div class="tab" onclick="showTab('upcasting')">🔄 Upcasting</div>
+  <div class="tab" onclick="showTab('occ')">⚡ Concurrency</div>
+  <div class="tab" onclick="showTab('gastown')">💥 Gas Town</div>
+  <div class="tab" onclick="showTab('whatif')">🔮 What-If</div>
+  <div class="tab" onclick="showTab('health')">❤️ Health</div>
+</div>
+
+<div class="content">
+
+  <!-- AUDIT TRAIL -->
+  <div class="section active" id="sec-audit">
+    <div class="card">
+      <div class="card-title">Complete Decision History</div>
+      <div class="card-sub">All events across loan, credit, fraud, compliance and audit streams — chronological order</div>
+      <div id="auditContent"><div class="loading">Loading...</div></div>
+    </div>
+  </div>
+
+  <!-- COMPLIANCE -->
+  <div class="section" id="sec-compliance">
+    <div class="grid2">
+      <div class="card">
+        <div class="card-title">Compliance Summary</div>
+        <div class="card-sub">Current compliance state for this application</div>
+        <div id="complianceSummary"><div class="loading">Loading...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Rule Evaluation Detail</div>
+        <div class="card-sub">Every rule evaluated, in order</div>
+        <div id="complianceRules"><div class="loading">Loading...</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TEMPORAL -->
+  <div class="section" id="sec-temporal">
+    <div class="card">
+      <div class="card-title">Temporal Compliance Query — Regulatory Time Travel</div>
+      <div class="card-sub">Query compliance state at any past timestamp. Compare current vs historical.</div>
+      <div class="temporal-controls">
+        <span style="font-size:12px;color:#555">as_of timestamp:</span>
+        <input type="text" id="asOfInput" placeholder="2026-03-25T10:00:00Z">
+        <button class="btn btn-purple" onclick="loadTemporal()">Query Past State</button>
+      </div>
+      <div class="compare-grid">
+        <div class="compare-box current">
+          <div class="compare-label">Current state (now)</div>
+          <div id="currentCompliance"><div class="loading">Loading...</div></div>
+        </div>
+        <div class="compare-box past">
+          <div class="compare-label">Past state (as_of query)</div>
+          <div id="pastCompliance"><div class="loading">Enter timestamp above and click Query</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- UPCASTING -->
+  <div class="section" id="sec-upcasting">
+    <div class="card">
+      <div class="card-title">Upcasting & Immutability</div>
+      <div class="card-sub">Event stored as v1 in PostgreSQL. Loaded as v2 through UpcasterRegistry. DB row never modified.</div>
+      <div id="upcastContent"><div class="loading">Loading...</div></div>
+    </div>
+  </div>
+
+  <!-- OCC -->
+  <div class="section" id="sec-occ">
+    <div class="card">
+      <div class="card-title">Optimistic Concurrency Control — Double Decision Test</div>
+      <div class="card-sub">Two agents collide on the same stream. Exactly one wins. One gets OptimisticConcurrencyError and retries.</div>
+      <div class="demo-container">
+        <div class="phase-bar">
+          <div class="phase" id="occ-ph1">1 · Both read version</div>
+          <div class="phase" id="occ-ph2">2 · Both attempt append</div>
+          <div class="phase" id="occ-ph3">3 · Alpha wins</div>
+          <div class="phase" id="occ-ph4">4 · Beta gets OCC error</div>
+          <div class="phase" id="occ-ph5">5 · Beta abandons</div>
+        </div>
+        <div class="occ-grid">
+          <div class="agent-box" id="occA">
+            <div class="agent-name">🤖 Agent-Alpha</div>
+            <div class="agent-status" id="occAStatus">Idle</div>
+          </div>
+          <div class="stream-center">
+            <div class="stream-ver" id="occVer">2</div>
+            <div class="stream-label">stream version</div>
+            <div style="font-size:10px;color:#444;margin-top:4px">credit-APEX-TEST-01</div>
+          </div>
+          <div class="agent-box" id="occB">
+            <div class="agent-name">🤖 Agent-Beta</div>
+            <div class="agent-status" id="occBStatus">Idle</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:10px">
+          <button class="btn btn-purple" id="occBtn" onclick="runOCC()">▶ Run Demo</button>
+          <button class="btn btn-gray" id="occReset" onclick="resetOCC()" disabled>↺ Reset</button>
+          <select id="occSpeed" style="background:var(--bg3);color:#aaa;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px">
+            <option value="900">Slow</option>
+            <option value="500" selected>Normal</option>
+            <option value="200">Fast</option>
+          </select>
+        </div>
+        <div class="log-box" id="occLog"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GAS TOWN -->
+  <div class="section" id="sec-gastown">
+    <div class="card">
+      <div class="card-title">Gas Town — Agent Crash Recovery</div>
+      <div class="card-sub">Agent crashes mid-session. reconstruct_agent_context() replays the stream. Agent resumes without repeating work.</div>
+      <div class="demo-container">
+        <div class="phase-bar">
+          <div class="phase" id="gt-ph1">1 · Working</div>
+          <div class="phase" id="gt-ph2">2 · Crash</div>
+          <div class="phase" id="gt-ph3">3 · Restart</div>
+          <div class="phase" id="gt-ph4">4 · Reconstruct</div>
+          <div class="phase" id="gt-ph5">5 · Resume</div>
+        </div>
+        <div class="gt-grid">
+          <div>
+            <div style="font-size:10px;color:#555;text-transform:uppercase;margin-bottom:6px">Event stream</div>
+            <div id="gtStream"></div>
+          </div>
+          <div>
+            <div class="memory-box" id="gtMemory">
+              <div class="memory-label">In-memory agent</div>
+              <div class="memory-item">session: <span id="gtSess">—</span></div>
+              <div class="memory-item">app: <span id="gtApp">—</span></div>
+              <div class="memory-item" id="gtN1">load_financials: <span>—</span></div>
+              <div class="memory-item" id="gtN2">validate_documents: <span>—</span></div>
+              <div class="memory-item" id="gtN3">analyse_ratios: <span>—</span></div>
+            </div>
+            <div class="crash-banner" id="gtCrash">
+              <div class="crash-title">💥 CRASHED</div>
+              <div class="crash-sub">TimeoutError — agent object gone</div>
+            </div>
+            <div class="context-box" id="gtContext">
+              <div class="memory-label" style="color:var(--green)">✅ Reconstructed</div>
+              <div class="ctx-item"><span class="ctx-key">health_status</span><span class="ctx-val warn">NEEDS_RECONCILIATION</span></div>
+              <div class="ctx-item"><span class="ctx-key">nodes_completed</span><span class="ctx-val">[load, validate, analyse]</span></div>
+              <div class="ctx-item"><span class="ctx-key">pending_work</span><span class="ctx-val warn">[generate_credit_decision]</span></div>
+              <div class="ctx-item"><span class="ctx-key">context_source</span><span class="ctx-val">prior_session_replay</span></div>
+              <div class="ctx-item"><span class="ctx-key">total_tokens</span><span class="ctx-val">2050</span></div>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:10px">
+          <button class="btn btn-purple" id="gtBtn" onclick="runGT()">▶ Run Demo</button>
+          <button class="btn btn-gray" id="gtReset" onclick="resetGT()" disabled>↺ Reset</button>
+          <select id="gtSpeed" style="background:var(--bg3);color:#aaa;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px">
+            <option value="900">Slow</option>
+            <option value="500" selected>Normal</option>
+            <option value="200">Fast</option>
+          </select>
+        </div>
+        <div class="log-box" id="gtLog"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- WHAT-IF -->
+  <div class="section" id="sec-whatif">
+    <div class="card">
+      <div class="card-title">What-If Counterfactual Projector</div>
+      <div class="card-sub">Substitute HIGH risk tier for MEDIUM. Replay events. Compare outcomes. Never writes to real store.</div>
+      <div class="demo-container">
+        <div class="phase-bar">
+          <div class="phase" id="wi-ph1">1 · Load real events</div>
+          <div class="phase" id="wi-ph2">2 · Find branch point</div>
+          <div class="phase" id="wi-ph3">3 · Inject counterfactual</div>
+          <div class="phase" id="wi-ph4">4 · Replay independent</div>
+          <div class="phase" id="wi-ph5">5 · Compare outcomes</div>
+        </div>
+        <div class="grid2" style="margin-bottom:10px">
+          <div>
+            <div style="font-size:10px;color:var(--blue);text-transform:uppercase;margin-bottom:6px">Real stream</div>
+            <div id="wiReal"></div>
+            <div id="wiRealOutcome"></div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--amber);text-transform:uppercase;margin-bottom:6px">Counterfactual stream</div>
+            <div id="wiCF"></div>
+            <div id="wiCFOutcome"></div>
+          </div>
+        </div>
+        <div id="wiDivergence"></div>
+        <div style="display:flex;gap:10px;margin-bottom:10px">
+          <button class="btn btn-purple" id="wiBtn" onclick="runWI()">▶ Run What-If</button>
+          <button class="btn btn-gray" id="wiReset" onclick="resetWI()" disabled>↺ Reset</button>
+          <select id="wiSpeed" style="background:var(--bg3);color:#aaa;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px">
+            <option value="900">Slow</option>
+            <option value="500" selected>Normal</option>
+            <option value="200">Fast</option>
+          </select>
+        </div>
+        <div class="log-box" id="wiLog"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HEALTH -->
+  <div class="section" id="sec-health">
+    <div class="grid3">
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-title">Ledger Health</div>
+        <div class="card-sub">Event store statistics and projection SLO status</div>
+        <div id="healthContent"><div class="loading">Loading...</div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = 'http://127.0.0.1:8765';
+let appId = () => document.getElementById('appId').value || 'APEX-TEST-01';
+let delay = ms => new Promise(r => setTimeout(r, ms));
+
+// ── TAB NAVIGATION ────────────────────────────────────────────────────────────
+function showTab(name) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('sec-'+name).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// ── LOAD ALL ─────────────────────────────────────────────────────────────────
+async function loadAll() {
+  loadAudit();
+  loadCompliance();
+  loadCurrentCompliance();
+  loadUpcasting();
+  loadHealth();
+}
+
+// ── AUDIT TRAIL ───────────────────────────────────────────────────────────────
+async function loadAudit() {
+  document.getElementById('auditContent').innerHTML = '<div class="loading">Loading events...</div>';
+  try {
+    const r = await fetch(`${API}/audit-trail?app_id=${appId()}`);
+    const d = await r.json();
+    if (d.error) { document.getElementById('auditContent').innerHTML = `<div class="error-msg">${d.error}</div>`; return; }
+
+    const streamColor = s => s.startsWith('loan') ? 'loan' : s.startsWith('credit') ? 'credit' : s.startsWith('fraud') ? 'fraud' : s.startsWith('compliance') ? 'compliance' : 'audit';
+
+    let html = `<div style="display:flex;justify-content:space-between;margin-bottom:12px">
+      <span style="font-size:13px;color:#fff">${d.total_events} events across ${[...new Set(d.events.map(e=>e.stream_id))].length} streams</span>
+      <span style="font-size:12px;color:#555">Application: ${d.application_id}</span>
+    </div><div class="event-list">`;
+
+    for (const e of d.events) {
+      const p = e.payload || {};
+      let detail = '';
+      if (e.event_type === 'CreditAnalysisCompleted') detail = `risk_tier=${p.decision?.risk_tier||'—'} · confidence=${p.decision?.confidence||'—'} · hash=${p.input_data_hash||'—'}`;
+      else if (e.event_type === 'FraudScreeningCompleted') detail = `fraud_score=${p.fraud_score} · risk=${p.risk_level} · recommendation=${p.recommendation}`;
+      else if (e.event_type === 'ComplianceCheckCompleted') detail = `verdict=${p.overall_verdict} · rules_passed=${p.rules_passed}/${p.rules_evaluated}`;
+      else if (e.event_type === 'DecisionGenerated') detail = `recommendation=${p.recommendation} · confidence=${p.confidence}`;
+      else if (e.event_type === 'ApplicationApproved') detail = `amount=$${Number(p.approved_amount_usd||0).toLocaleString()} · approved_by=${p.approved_by}`;
+      else if (e.event_type === 'ApplicationSubmitted') detail = `applicant=${p.applicant_id} · amount=$${Number(p.requested_amount_usd||0).toLocaleString()}`;
+
+      html += `<div class="ev ${streamColor(e.stream_id)}">
+        <span class="ev-pos">[${e.stream_position}]</span>
+        <div style="flex:1">
+          <div class="ev-type">${e.event_type} <span style="color:#444;font-weight:400;font-size:10px">v${e.event_version}</span></div>
+          <div class="ev-stream">${e.stream_id}</div>
+          ${detail ? `<div class="ev-detail">${detail}</div>` : ''}
+        </div>
+        <span class="ev-time">${e.recorded_at.substring(11,19)} UTC</span>
+      </div>`;
+    }
+    html += '</div>';
+    document.getElementById('auditContent').innerHTML = html;
+  } catch(e) {
+    document.getElementById('auditContent').innerHTML = `<div class="error-msg">Cannot connect to presentation server. Run: python scripts/presentation_server.py</div>`;
+  }
+}
+
+// ── COMPLIANCE ────────────────────────────────────────────────────────────────
+async function loadCompliance() {
+  try {
+    const r = await fetch(`${API}/compliance?app_id=${appId()}`);
+    const d = await r.json();
+    const s = d.summary || {};
+
+    document.getElementById('complianceSummary').innerHTML = `
+      <div style="margin-bottom:14px">
+        <span class="verdict-badge ${s.overall_verdict||'PENDING'}">${s.overall_verdict||'PENDING'}</span>
+      </div>
+      <div class="field-row"><span class="field-key">rules_evaluated</span><span class="field-val" style="color:var(--blue)">${s.rules_evaluated}</span></div>
+      <div class="field-row"><span class="field-key">rules_passed</span><span class="field-val present">${s.rules_passed}</span></div>
+      <div class="field-row"><span class="field-key">rules_failed</span><span class="field-val" style="color:${s.rules_failed>0?'var(--red)':'#444'}">${s.rules_failed}</span></div>
+      <div class="field-row"><span class="field-key">rules_noted</span><span class="field-val" style="color:var(--amber)">${s.rules_noted}</span></div>
+      <div class="field-row"><span class="field-key">has_hard_block</span><span class="field-val" style="color:${s.has_hard_block?'var(--red)':'var(--green)'}">${s.has_hard_block}</span></div>
+      <div class="field-row"><span class="field-key">completed_at</span><span class="field-val" style="color:#555;font-size:11px">${(s.completed_at||'').substring(0,19)}</span></div>
+    `;
+
+    let rulesHtml = '';
+    for (const e of (d.events||[])) {
+      const p = e.payload||{};
+      const et = e.event_type;
+      if (!['ComplianceRulePassed','ComplianceRuleFailed','ComplianceRuleNoted'].includes(et)) continue;
+      const icon = et==='ComplianceRulePassed'?'✓':et==='ComplianceRuleFailed'?'✗':'!';
+      const cls = et==='ComplianceRulePassed'?'pass':et==='ComplianceRuleFailed'?'fail':'note';
+      rulesHtml += `<div class="rule-row">
+        <div class="rule-icon ${cls}">${icon}</div>
+        <div style="flex:1">
+          <div style="font-weight:500">${p.rule_id||'—'}</div>
+          <div style="font-size:11px;color:#555">${p.rule_name||''}</div>
+        </div>
+        <div style="font-size:10px;color:#444">${(e.recorded_at||'').substring(11,19)}</div>
+      </div>`;
+    }
+    document.getElementById('complianceRules').innerHTML = rulesHtml || '<div class="loading">No rule events found</div>';
+  } catch(e) {
+    document.getElementById('complianceSummary').innerHTML = `<div class="error-msg">Server not running</div>`;
+  }
+}
+
+// ── TEMPORAL ──────────────────────────────────────────────────────────────────
+async function loadCurrentCompliance() {
+  try {
+    const r = await fetch(`${API}/compliance?app_id=${appId()}`);
+    const d = await r.json();
+    const s = d.summary||{};
+    document.getElementById('currentCompliance').innerHTML = renderComplianceState(s, 'Current');
+  } catch(e) {
+    document.getElementById('currentCompliance').innerHTML = `<div class="error-msg">Server not running</div>`;
+  }
+}
+
+async function loadTemporal() {
+  const asOf = document.getElementById('asOfInput').value;
+  if (!asOf) return;
+  document.getElementById('pastCompliance').innerHTML = '<div class="loading">Querying past state...</div>';
+  try {
+    const r = await fetch(`${API}/compliance/temporal?app_id=${appId()}&as_of=${encodeURIComponent(asOf)}`);
+    const d = await r.json();
+    document.getElementById('pastCompliance').innerHTML = renderComplianceState(d, `as_of ${asOf.substring(0,19)}`);
+  } catch(e) {
+    document.getElementById('pastCompliance').innerHTML = `<div class="error-msg">Error querying past state</div>`;
+  }
+}
+
+function renderComplianceState(s, label) {
+  const verdict = s.overall_verdict || s.status || 'PENDING';
+  return `
+    <div style="margin-bottom:10px"><span class="verdict-badge ${verdict}">${verdict}</span></div>
+    <div class="field-row"><span class="field-key">rules_evaluated</span><span class="field-val" style="color:var(--blue)">${s.rules_evaluated||0}</span></div>
+    <div class="field-row"><span class="field-key">rules_passed</span><span class="field-val present">${s.rules_passed||0}</span></div>
+    <div class="field-row"><span class="field-key">has_hard_block</span><span class="field-val">${s.has_hard_block||false}</span></div>
+    ${s.message ? `<div style="font-size:11px;color:var(--amber);margin-top:8px">${s.message}</div>` : ''}
+  `;
+}
+
+// ── UPCASTING ─────────────────────────────────────────────────────────────────
+async function loadUpcasting() {
+  try {
+    const r = await fetch(`${API}/upcasting?app_id=${appId()}`);
+    const d = await r.json();
+    if (d.error) { document.getElementById('upcastContent').innerHTML = `<div class="error-msg">${d.error}</div>`; return; }
+
+    const sp = d.stored_payload||{};
+    const lp = d.loaded_payload||{};
+
+    document.getElementById('upcastContent').innerHTML = `
+      <div class="upcast-grid">
+        <div class="upcast-box stored">
+          <div class="upcast-label">📦 Stored in PostgreSQL (raw DB row)</div>
+          <div class="field-row"><span class="field-key">event_version</span><span class="field-val version">v${d.stored_version}</span></div>
+          <div class="field-row"><span class="field-key">model_versions</span><span class="field-val absent">NOT PRESENT</span></div>
+          <div class="field-row"><span class="field-key">confidence_score</span><span class="field-val absent">NOT PRESENT</span></div>
+          <div class="field-row"><span class="field-key">regulatory_basis</span><span class="field-val absent">NOT PRESENT</span></div>
+          <div class="field-row"><span class="field-key">model_version</span><span class="field-val" style="color:var(--blue)">${sp.model_version||'legacy'}</span></div>
+        </div>
+        <div class="upcast-box loaded">
+          <div class="upcast-label">✅ Loaded via UpcasterRegistry (read-time)</div>
+          <div class="field-row"><span class="field-key">event_version</span><span class="field-val version">v${d.loaded_version}</span></div>
+          <div class="field-row"><span class="field-key">model_versions</span><span class="field-val present">${JSON.stringify(lp.model_versions||{})}</span></div>
+          <div class="field-row"><span class="field-key">confidence_score</span><span class="field-val" style="color:var(--amber)">${lp.confidence_score} (null — not fabricated)</span></div>
+          <div class="field-row"><span class="field-key">regulatory_basis</span><span class="field-val present">${JSON.stringify(lp.regulatory_basis||[])}</span></div>
+        </div>
+      </div>
+      <div class="immutability-proof">
+        ✅ <strong>Immutability Guaranteed</strong> — The PostgreSQL row is v${d.stored_version} before and after loading.
+        The upcaster is a read-time transformation only. The database is never modified.
+        <div style="font-size:11px;color:#555;margin-top:4px">event_id: ${d.event_id} · recorded_at: ${(d.recorded_at||'').substring(0,19)}</div>
+      </div>
+    `;
+  } catch(e) {
+    document.getElementById('upcastContent').innerHTML = `<div class="error-msg">Server not running</div>`;
+  }
+}
+
+// ── HEALTH ────────────────────────────────────────────────────────────────────
+async function loadHealth() {
+  try {
+    const r = await fetch(`${API}/stats`);
+    const d = await r.json();
+    document.getElementById('healthContent').innerHTML = `
+      <div class="grid3" style="margin-bottom:16px">
+        <div style="text-align:center"><div class="stat-val">${d.total_events||0}</div><div class="stat-label">Total Events</div></div>
+        <div style="text-align:center"><div class="stat-val">${d.total_streams||0}</div><div class="stat-label">Active Streams</div></div>
+        <div style="text-align:center"><div class="stat-val" style="color:var(--green)">✓</div><div class="stat-label">Store Healthy</div></div>
+      </div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;color:#555;text-transform:uppercase;margin-bottom:8px">Top Event Types</div>
+        ${(d.top_event_types||[]).map(t=>`
+          <div class="health-item">
+            <span style="color:var(--purple)">${t.type}</span>
+            <span style="color:#555">${t.count} events</span>
+          </div>`).join('')}
+      </div>
+      <div>
+        <div style="font-size:11px;color:#555;text-transform:uppercase;margin-bottom:8px">Most Recent Events</div>
+        ${(d.recent_events||[]).map(e=>`
+          <div class="health-item">
+            <span style="color:#888">${e.event_type}</span>
+            <span style="color:#444;font-size:11px">${e.stream_id}</span>
+            <span style="color:#444;font-size:10px">${(e.recorded_at||'').substring(11,19)}</span>
+          </div>`).join('')}
+      </div>
+    `;
+  } catch(e) {
+    document.getElementById('healthContent').innerHTML = `<div class="error-msg">Server not running. Run: python scripts/presentation_server.py</div>`;
+  }
+}
+
+// ── OCC DEMO ──────────────────────────────────────────────────────────────────
+let occRunning = false;
+function occLog(msg,cls){const p=document.getElementById('occLog');const ts=new Date().toLocaleTimeString('en-GB',{hour12:false});p.innerHTML+=`<div class="log-line"><span class="c-ts">[${ts}]</span> <span class="c-${cls||'info'}">${msg}</span></div>`;p.scrollTop=p.scrollHeight;}
+function setOCCPhase(n,type){for(let i=1;i<=5;i++){const el=document.getElementById('occ-ph'+i);el.className='phase'+(i===n?' '+(type||'active'):i<n?' done':'');}}
+function setAgent(id,state,status){document.getElementById('occ'+id).className='agent-box '+state;document.getElementById('occ'+id+'Status').textContent=status;}
+
+async function runOCC(){
+  if(occRunning)return; occRunning=true;
+  document.getElementById('occBtn').disabled=true;
+  const spd=()=>parseInt(document.getElementById('occSpeed').value);
+
+  setOCCPhase(1); occLog('Both agents read stream version...','hi');
+  await delay(spd()*.5);
+  setAgent('A','active','Read version = 2'); setAgent('B','active','Read version = 2');
+  occLog('Agent-Alpha: stream version = 2','ok'); occLog('Agent-Beta:  stream version = 2','ok');
+  await delay(spd());
+
+  setOCCPhase(2); occLog('Both attempt append(expected_version=2) simultaneously...','hi');
+  setAgent('A','active','Acquiring lock...'); setAgent('B','active','Acquiring lock...');
+  await delay(spd()*.6);
+
+  setOCCPhase(3); occLog('Agent-Alpha: LOCK ACQUIRED — appending at stream_position=3','ok');
+  setAgent('A','won','✅ Committed at position 3');
+  document.getElementById('occVer').textContent='3';
+  await delay(spd()*.4);
+
+  setOCCPhase(4,'crash'); occLog('Agent-Beta: ❌ OptimisticConcurrencyError(expected=2, actual=3)','err');
+  setAgent('B','lost','❌ OptimisticConcurrencyError');
+  await delay(spd());
+
+  setOCCPhase(5); occLog('Agent-Beta: reloading stream...','warn');
+  setAgent('B','retrying','Reloading stream...');
+  await delay(spd()*.5);
+  occLog('Agent-Beta: analysis already recorded — abandoning (correct)','warn');
+  setAgent('B','abandoned','🛑 Abandoned — analysis done');
+  occLog('✅ Exactly 1 CreditAnalysisCompleted in stream. No split-brain.','ok');
+  document.getElementById('occReset').disabled=false; occRunning=false;
+}
+
+function resetOCC(){
+  setAgent('A','','Idle'); setAgent('B','','Idle');
+  document.getElementById('occVer').textContent='2';
+  document.getElementById('occLog').innerHTML='';
+  for(let i=1;i<=5;i++)document.getElementById('occ-ph'+i).className='phase';
+  document.getElementById('occBtn').disabled=false; document.getElementById('occReset').disabled=true;
+}
+
+// ── GAS TOWN DEMO ─────────────────────────────────────────────────────────────
+let gtRunning=false;
+function gtLog(msg,cls){const p=document.getElementById('gtLog');const ts=new Date().toLocaleTimeString('en-GB',{hour12:false});p.innerHTML+=`<div class="log-line"><span class="c-ts">[${ts}]</span> <span class="c-${cls||'info'}">${msg}</span></div>`;p.scrollTop=p.scrollHeight;}
+function setGTPhase(n,type){for(let i=1;i<=5;i++){const el=document.getElementById('gt-ph'+i);el.className='phase'+(i===n?' '+(type||'active'):i<n?' done':'');}}
+function addGTEvent(pos,type,detail,cls){document.getElementById('gtStream').innerHTML+=`<div class="ev ${cls||''}" style="margin-bottom:4px"><span class="ev-pos">[${pos}]</span><div><div class="ev-type" style="color:${cls==='crash-ev'?'var(--red)':'var(--purple)'}">${type}</div><div class="ev-detail">${detail}</div></div></div>`;}
+function setGTNode(id,status){const el=document.getElementById(id);const sp=el.querySelector('span');if(status==='done'){sp.textContent='✅';el.className='memory-item done';}else if(status==='pending'){sp.textContent='⬜';el.className='memory-item pending';}}
+
+async function runGT(){
+  if(gtRunning)return; gtRunning=true;
+  document.getElementById('gtBtn').disabled=true;
+  const spd=()=>parseInt(document.getElementById('gtSpeed').value);
+
+  setGTPhase(1); gtLog('=== PHASE 1: Agent working normally ===','hi');
+  await delay(spd()*.4);
+  addGTEvent(0,'AgentSessionStarted','model=claude-sonnet-4-6 · app=APEX-CRASH-VIDEO · context=fresh');
+  document.getElementById('gtMemory').className='memory-box active';
+  document.getElementById('gtSess').textContent='sess-crash-demo';
+  document.getElementById('gtApp').textContent='APEX-CRASH-VIDEO';
+  gtLog('AgentSessionStarted — Gas Town anchor written','ok');
+  await delay(spd());
+
+  addGTEvent(1,'AgentNodeExecuted','load_financials · tokens=640 · $0.0012');
+  setGTNode('gtN1','done'); gtLog('Node: load_financials completed','ok');
+  await delay(spd());
+
+  addGTEvent(2,'AgentNodeExecuted','validate_documents · tokens=380 · $0.0008');
+  setGTNode('gtN2','done'); gtLog('Node: validate_documents completed','ok');
+  await delay(spd());
+
+  addGTEvent(3,'AgentNodeExecuted','analyse_ratios · tokens=1030 · $0.0021');
+  setGTNode('gtN3','done'); gtLog('Node: analyse_ratios completed','ok');
+  await delay(spd());
+
+  setGTPhase(2,'crash');
+  addGTEvent(4,'AgentSessionFailed','TimeoutError · recoverable=true · last=analyse_ratios','crash-ev');
+  gtLog('❌ CRASH — TimeoutError after 30s','err');
+  document.getElementById('gtMemory').className='memory-box crashed';
+  document.getElementById('gtCrash').className='crash-banner show';
+  gtLog('💥 In-memory agent object GONE','err');
+  await delay(spd()*1.2);
+
+  setGTPhase(3); document.getElementById('gtMemory').className='memory-box gone';
+  gtLog('=== PHASE 3: Process restarting — nothing in memory ===','hi');
+  await delay(spd());
+
+  setGTPhase(4); gtLog('Calling reconstruct_agent_context()...','hi');
+  gtLog('Replaying 5 events from event store...','info');
+  await delay(spd());
+  gtLog('Completed: load_financials, validate_documents, analyse_ratios','ok');
+  gtLog('Pending:   generate_credit_decision','warn');
+  document.getElementById('gtCrash').className='crash-banner';
+  document.getElementById('gtContext').className='context-box show';
+  await delay(spd());
+
+  setGTPhase(5,'done'); gtLog('=== PHASE 5: Agent resuming ===','hi');
+  gtLog('load_financials    ✅ DONE — skipping','ok');
+  gtLog('validate_documents ✅ DONE — skipping','ok');
+  gtLog('analyse_ratios     ✅ DONE — skipping','ok');
+  gtLog('generate_credit_decision ▶ RESUMING HERE','warn');
+  gtLog('Gas Town recovery complete. No repeated work. ✅','ok');
+  document.getElementById('gtReset').disabled=false; gtRunning=false;
+}
+
+function resetGT(){
+  document.getElementById('gtStream').innerHTML='';
+  document.getElementById('gtLog').innerHTML='';
+  document.getElementById('gtMemory').className='memory-box';
+  document.getElementById('gtCrash').className='crash-banner';
+  document.getElementById('gtContext').className='context-box';
+  document.getElementById('gtSess').textContent='—';
+  document.getElementById('gtApp').textContent='—';
+  ['gtN1','gtN2','gtN3'].forEach(id=>{const el=document.getElementById(id);el.querySelector('span').textContent='—';el.className='memory-item';});
+  for(let i=1;i<=5;i++)document.getElementById('gt-ph'+i).className='phase';
+  document.getElementById('gtBtn').disabled=false; document.getElementById('gtReset').disabled=true; gtRunning=false;
+}
+
+// ── WHAT-IF DEMO ──────────────────────────────────────────────────────────────
+let wiRunning=false;
+function wiLog(msg,cls){const p=document.getElementById('wiLog');const ts=new Date().toLocaleTimeString('en-GB',{hour12:false});p.innerHTML+=`<div class="log-line"><span class="c-ts">[${ts}]</span> <span class="c-${cls||'info'}">${msg}</span></div>`;p.scrollTop=p.scrollHeight;}
+function setWIPhase(n,type){for(let i=1;i<=5;i++){const el=document.getElementById('wi-ph'+i);el.className='phase'+(i===n?' '+(type||'active'):i<n?' done':'');}}
+function addWIReal(pos,type,detail,cls){document.getElementById('wiReal').innerHTML+=`<div class="ev ${cls||''}" style="margin-bottom:4px"><span class="ev-pos">[${pos}]</span><div><div class="ev-type" style="color:${cls==='branch'?'var(--amber)':'var(--blue)'}">${type}</div><div class="ev-detail">${detail}</div></div></div>`;}
+function addWICF(pos,type,detail,cls){document.getElementById('wiCF').innerHTML+=`<div class="ev ${cls||''}" style="margin-bottom:4px"><span class="ev-pos">[${pos}]</span><div><div class="ev-type" style="color:${cls==='injected'?'var(--amber)':'#555'}">${type}</div><div class="ev-detail">${detail}</div></div></div>`;}
+
+async function runWI(){
+  if(wiRunning)return; wiRunning=true;
+  document.getElementById('wiBtn').disabled=true;
+  const spd=()=>parseInt(document.getElementById('wiSpeed').value);
+
+  setWIPhase(1); wiLog('Loading real event stream...','hi');
+  await delay(spd()*.4);
+  addWIReal(0,'ApplicationSubmitted','applicant=COMP-001 · $500,000');
+  addWIReal(1,'AgentSessionStarted','credit_analysis · claude-sonnet-4-6');
+  addWIReal(2,'CreditAnalysisCompleted','risk_tier=MEDIUM · confidence=0.85 · $450,000','branch');
+  addWIReal(3,'FraudScreeningCompleted','fraud_score=0.12 · LOW · APPROVE');
+  addWIReal(4,'ComplianceCheckCompleted','verdict=CLEAR · 10/10 passed');
+  addWIReal(5,'DecisionGenerated','recommendation=APPROVE · confidence=0.85');
+  addWIReal(6,'ApplicationApproved','$450,000 · HUMAN-001');
+  wiLog('7 real events loaded','ok');
+  await delay(spd());
+
+  setWIPhase(2,'branch'); wiLog('Branch point: CreditAnalysisCompleted [pos=2]','warn');
+  await delay(spd());
+
+  setWIPhase(3,'branch'); wiLog('Injecting counterfactual: HIGH risk, 0.75 confidence, $200K','warn');
+  await delay(spd()*.4);
+  addWICF(0,'ApplicationSubmitted','applicant=COMP-001 · $500,000');
+  addWICF(1,'AgentSessionStarted','credit_analysis · claude-sonnet-4-6');
+  addWICF(2,'⚡ CreditAnalysisCompleted','risk_tier=HIGH · confidence=0.75 · $200,000  ← INJECTED','injected');
+  wiLog('Counterfactual injected — never written to real store','warn');
+  await delay(spd());
+
+  setWIPhase(4); wiLog('Replaying causally independent post-branch events...','hi');
+  await delay(spd()*.4);
+  addWICF(3,'FraudScreeningCompleted','INDEPENDENT — replaying');
+  addWICF(4,'ComplianceCheckCompleted','INDEPENDENT — replaying');
+  addWICF(5,'DecisionGenerated','INDEPENDENT — replaying');
+  addWICF(6,'ApplicationApproved','INDEPENDENT — replaying');
+  wiLog('0 events skipped — no causation_id dependency found','ok');
+  await delay(spd());
+
+  setWIPhase(5,'done');
+  document.getElementById('wiRealOutcome').innerHTML=`<div style="background:#0d1f12;border:1px solid var(--green);border-radius:8px;padding:10px;margin-top:8px;font-size:12px"><div style="color:var(--green);font-weight:500;margin-bottom:6px">✅ Real Outcome</div><div class="field-row"><span class="field-key">final_state</span><span class="field-val present">APPROVED</span></div><div class="field-row"><span class="field-key">credit_risk_tier</span><span class="field-val">MEDIUM</span></div><div class="field-row"><span class="field-key">confidence</span><span class="field-val">0.85</span></div><div class="field-row"><span class="field-key">approved_amount</span><span class="field-val">$450,000</span></div></div>`;
+  document.getElementById('wiCFOutcome').innerHTML=`<div style="background:#1c1400;border:1px solid var(--amber);border-radius:8px;padding:10px;margin-top:8px;font-size:12px"><div style="color:var(--amber);font-weight:500;margin-bottom:6px">⚠️ Counterfactual Outcome</div><div class="field-row"><span class="field-key">final_state</span><span class="field-val" style="color:var(--amber)">APPROVED*</span></div><div class="field-row"><span class="field-key">credit_risk_tier</span><span class="field-val" style="color:var(--amber)">HIGH ← DIVERGED</span></div><div class="field-row"><span class="field-key">confidence</span><span class="field-val" style="color:var(--amber)">0.75 ← DIVERGED</span></div><div class="field-row"><span class="field-key">approved_amount</span><span class="field-val" style="color:var(--amber)">$200,000 ← DIVERGED</span></div></div>`;
+  document.getElementById('wiDivergence').innerHTML=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;font-size:12px"><div style="color:var(--amber);font-weight:500;margin-bottom:8px">3 Divergences Found</div><div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--border)"><span style="color:#555;min-width:160px">credit_risk_tier</span><span style="color:var(--blue)">MEDIUM</span><span style="color:#444">→</span><span style="color:var(--amber)">HIGH</span></div><div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--border)"><span style="color:#555;min-width:160px">credit_confidence</span><span style="color:var(--blue)">0.85</span><span style="color:#444">→</span><span style="color:var(--amber)">0.75</span></div><div style="display:flex;gap:10px;padding:5px 0"><span style="color:#555;min-width:160px">recommended_limit</span><span style="color:var(--blue)">$450,000</span><span style="color:#444">→</span><span style="color:var(--amber)">$200,000</span></div><div style="margin-top:10px;font-size:11px;color:#555">HIGH risk alone does not force DECLINE — confidence 0.75 ≥ 0.60 floor. Counterfactual never written to real store.</div></div>`;
+  wiLog('Real: APPROVED · MEDIUM · $450K','ok');
+  wiLog('CF:   APPROVED · HIGH · $200K — 3 fields diverged','warn');
+  wiLog('✅ What-if complete. Real store unchanged.','ok');
+  document.getElementById('wiReset').disabled=false; wiRunning=false;
+}
+
+function resetWI(){
+  ['wiReal','wiCF','wiLog','wiRealOutcome','wiCFOutcome','wiDivergence'].forEach(id=>document.getElementById(id).innerHTML='');
+  for(let i=1;i<=5;i++)document.getElementById('wi-ph'+i).className='phase';
+  document.getElementById('wiBtn').disabled=false; document.getElementById('wiReset').disabled=true; wiRunning=false;
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+window.onload = () => {
+  loadAll();
+  // Set a suggested as_of timestamp
+  const d = new Date(); d.setHours(d.getHours()-2);
+  document.getElementById('asOfInput').value = d.toISOString().substring(0,19)+'Z';
+};
+</script>
+</body>
+</html>

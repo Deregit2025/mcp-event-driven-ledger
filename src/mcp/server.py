@@ -32,8 +32,8 @@ def create_server(store=None, daemon=None, db_pool=None):
         store = InMemoryEventStore(upcaster_registry=upcaster_registry)
         logger.warning("Using InMemoryEventStore — data will not persist between restarts")
 
-    tool_executor = LedgerToolExecutor(store)
     resource_reader = LedgerResourceReader(store, projection_daemon=daemon, db_pool=db_pool)
+    tool_executor = LedgerToolExecutor(store, resource_reader=resource_reader)
 
     return LedgerMCPServer(
         store=store,
